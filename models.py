@@ -1,4 +1,8 @@
-from peewee import *
+from peewee import (
+    SqliteDatabase, Model, CharField, DateTimeField, 
+    FloatField, IntegerField, ForeignKeyField, 
+    DateField, BooleanField, UUIDField
+)
 from datetime import datetime, timedelta
 
 db = SqliteDatabase('production.db')
