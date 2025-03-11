@@ -37,8 +37,7 @@ def get_delivery_schedule(start_date=None, end_date=None):
     query = (Order
             .select(Order, Customer)
             .join(Customer)
-            .where(Order.is_future == True))
-    
+    )
     if start_date and end_date:
         query = query.where((Order.delivery_date >= start_date) & 
                           (Order.delivery_date <= end_date))
@@ -49,6 +48,7 @@ def get_production_plan(start_date=None, end_date=None):
     query = (OrderItem
         .select(
             Order.production_date,
+            Order.delivery_date,
             Item.name,
             fn.SUM(OrderItem.amount).alias('total_amount'),
             Item.seed_quantity,
@@ -57,7 +57,22 @@ def get_production_plan(start_date=None, end_date=None):
         .join(Order)
         .switch(OrderItem)
         .join(Item)
-        .where(Order.is_future == True)
+        .where(
+            (Order.is_future == True) &
+            (
+                # For non-subscription orders
+                (
+                    (Order.from_date.is_null(True)) & 
+                    (Order.to_date.is_null(True))
+                ) |
+                # For subscription orders, ensure both delivery and production dates are within range
+                (
+                    (Order.from_date.is_null(False)) & 
+                    (Order.delivery_date >= Order.from_date) & 
+                    (Order.delivery_date <= Order.to_date)
+                )
+            )
+        )
         .group_by(Order.production_date, Item.name, Item.seed_quantity, Item.substrate)  # Added these to group by
         .order_by(Order.production_date))
     
@@ -81,7 +96,15 @@ def get_transfer_schedule(start_date=None, end_date=None):
         .join(Order)
         .switch(OrderItem)
         .join(Item)
-        .where(Order.is_future == True)
+        .where(
+            (Order.is_future == True) &
+            (
+                # Either it's a non-subscription order
+                ((Order.from_date.is_null(True)) & (Order.to_date.is_null(True))) |
+                # Or it's within the subscription date range
+                ((Order.from_date.is_null(False)) & (Order.delivery_date >= Order.from_date) & (Order.delivery_date <= Order.to_date))
+            )
+        )
         .group_by(Order.production_date, Item.name, Item.soaking_days, Item.germination_days, Item.seed_quantity))
     
     transfer_data = []

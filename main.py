@@ -343,6 +343,29 @@ class ProductionApp(tk.Tk):
 
                         existing_order = row['existing_order']
                         
+                        # Gather item data first and validate
+                        order_items_data = []
+                        for item_row in row['items']:
+                            item_name = item_row['item_cb'].get()
+                            try:
+                                # Convert amount string to float explicitly
+                                amount_str = item_row['amount_entry'].get().strip()
+                                amount = float(amount_str)
+                                if amount <= 0:
+                                    raise ValueError(f"Amount must be greater than 0 for item {item_name}")
+                            except ValueError as e:
+                                if "could not convert string to float" in str(e):
+                                    messagebox.showerror("Error", f"Invalid amount for item {item_name}. Please enter a number.")
+                                else:
+                                    messagebox.showerror("Error", str(e))
+                                return
+                            
+                            if item_name not in self.items:
+                                messagebox.showerror("Error", f"Invalid item: {item_name}")
+                                return
+                            
+                            order_items_data.append((item_name, amount))
+                        
                         if existing_order:
                             # Update existing order
                             existing_order.delivery_date = delivery_date
@@ -354,11 +377,15 @@ class ProductionApp(tk.Tk):
                             for oi in existing_order.order_items:
                                 oi.delete_instance()
                             
-                            # Save the order items
-                            order_obj = existing_order
+                            # Create new order items
+                            for item_name, amount in order_items_data:
+                                OrderItem.create(
+                                    order=existing_order,
+                                    item=self.items[item_name],
+                                    amount=amount
+                                )
                         else:
                             # For a new order, we need a customer
-                            # Get the customer from the first existing order in the list
                             if subscription_orders:
                                 customer = subscription_orders[0].customer
                                 subscription_type = subscription_orders[0].subscription_type
@@ -367,11 +394,15 @@ class ProductionApp(tk.Tk):
                                 messagebox.showerror("Error", "Cannot determine customer for new order.")
                                 return
                             
-                            # Create a new order
-                            order_obj = Order.create(
+                            # Calculate production date based on max days
+                            max_days = max(self.items[item_name].total_days for item_name, _ in order_items_data)
+                            production_date = delivery_date - timedelta(days=max_days)
+                            
+                            # Create new order
+                            new_order = Order.create(
                                 customer=customer,
                                 delivery_date=delivery_date,
-                                production_date=delivery_date - timedelta(days=7),  # Calculate production date
+                                production_date=production_date,
                                 from_date=overall_from,
                                 to_date=overall_to,
                                 subscription_type=subscription_type,
@@ -379,33 +410,21 @@ class ProductionApp(tk.Tk):
                                 order_id=uuid.uuid4(),
                                 is_future=True
                             )
-                        
-                        # Create order items for this order
-                        for item_row in row['items']:
-                            item_name = item_row['item_cb'].get()
-                            try:
-                                amount = float(item_row['amount_entry'].get())
-                            except ValueError:
-                                messagebox.showerror("Error", f"Invalid amount for item {item_name}.")
-                                return
                             
-                            if item_name not in self.items:
-                                messagebox.showerror("Error", f"Invalid item: {item_name}.")
-                                return
-                            
-                            OrderItem.create(
-                                order=order_obj,
-                                item=self.items[item_name],
-                                amount=amount
-                            )
+                            # Create order items
+                            for item_name, amount in order_items_data:
+                                OrderItem.create(
+                                    order=new_order,
+                                    item=self.items[item_name],
+                                    amount=amount
+                                )
                 
-                messagebox.showinfo("Success", "Subscription orders updated successfully!")
+                messagebox.showinfo("Success", "Orders updated successfully!")
                 edit_window.destroy()
                 self.on_customer_select(None)  # Refresh orders list
-            
+                
             except Exception as e:
                 messagebox.showerror("Error", f"An error occurred: {str(e)}")
-
         # Save button
         save_btn = ttk.Button(buttons_frame, text="Save All Changes", command=save_all_changes)
         save_btn.pack(side="right", padx=5)
