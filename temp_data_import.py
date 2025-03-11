@@ -65,18 +65,56 @@ def import_old_data(csv_filepath):
                         print(f"Invalid amount format in row {row_count}: {row}")
                         continue
                     
-                    # Parse dates
+                    # Parse dates with explicit century adjustment
                     try:
-                        delivery_date = datetime.strptime(row[3], '%d.%m.%y').date()
-                        # Use Ansäen (seeding date) if provided, otherwise calculate it later
-                        production_date = datetime.strptime(row[4], '%d.%m.%y').date() if row[4] else None
+                        # Parse delivery date (column 3)
+                        delivery_date_str = row[3].strip()
+                        if delivery_date_str:
+                            delivery_date = datetime.strptime(delivery_date_str, '%d.%m.%y').date()
+                            if delivery_date.year < 2000:
+                                delivery_date = delivery_date.replace(year=delivery_date.year + 100)
+                        else:
+                            print(f"Missing delivery date in row {row_count}: {row}")
+                            continue
                         
-                        # Parse subscription frequency
-                        subscription_type = int(row[5])
+                        # Parse production/seeding date (column 4)
+                        production_date = None
+                        production_date_str = row[4].strip() if len(row) > 4 else ""
+                        if production_date_str:
+                            production_date = datetime.strptime(production_date_str, '%d.%m.%y').date()
+                            if production_date.year < 2000:
+                                production_date = production_date.replace(year=production_date.year + 100)
                         
-                        # Parse from/to dates for subscriptions
-                        from_date = datetime.strptime(row[6], '%d.%m.%y').date() if row[6] and subscription_type > 0 else None
-                        to_date = datetime.strptime(row[7], '%d.%m.%y').date() if row[7] and subscription_type > 0 else None
+                        # Parse subscription type (column 5)
+                        subscription_type = 0
+                        if len(row) > 5 and row[5].strip():
+                            try:
+                                subscription_type = int(row[5].strip())
+                            except ValueError:
+                                print(f"Invalid subscription type in row {row_count}: {row[5]}")
+                                subscription_type = 0
+                        
+                        # Parse from date for subscriptions (column 6)
+                        from_date = None
+                        if subscription_type > 0 and len(row) > 6 and row[6].strip():
+                            from_date_str = row[6].strip()
+                            from_date = datetime.strptime(from_date_str, '%d.%m.%y').date()
+                            if from_date.year < 2000:
+                                from_date = from_date.replace(year=from_date.year + 100)
+                        
+                        # Parse to date for subscriptions (column 7)
+                        to_date = None
+                        if subscription_type > 0 and len(row) > 7 and row[7].strip():
+                            to_date_str = row[7].strip()
+                            to_date = datetime.strptime(to_date_str, '%d.%m.%y').date()
+                            if to_date.year < 2000:
+                                to_date = to_date.replace(year=to_date.year + 100)
+                        
+                        # Debug output
+                        print(f"Row {row_count}: Customer={customer_name}, Item={item_name}, Amount={amount}")
+                        print(f"  Delivery={delivery_date}, Production={production_date}")
+                        print(f"  Subscription: Type={subscription_type}, From={from_date}, To={to_date}")
+                        
                     except ValueError as e:
                         print(f"Date parsing error in row {row_count} {row}: {e}")
                         continue

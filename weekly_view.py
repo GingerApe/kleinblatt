@@ -954,7 +954,6 @@ class WeeklyProductionView(WeeklyBaseView):
             frame = self.day_frames[day]
             
             # Create a structured layout with a grid
-            # First create two columns with fixed width
             frame.columnconfigure(0, weight=1, minsize=100)  # Item column
             frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
             
@@ -986,19 +985,13 @@ class WeeklyProductionView(WeeklyBaseView):
                 amount_label = ttk.Label(frame, text=f"{prod.total_amount:.1f}", font=('Arial', 11))
                 amount_label.grid(row=row_index, column=1, sticky='e', padx=5, pady=3)
                 
-                # Add substrate info
-                #row_index += 1
-                #substrate_text = f"Substrate: {prod.item.substrate}"
-                #substrate_label = ttk.Label(frame, text=substrate_text, font=('Arial', 9))
-                #substrate_label.grid(row=row_index, column=0, columnspan=2, sticky='w', padx=15, pady=1)
-                
                 # Add a separator between items
                 row_index += 1
                 if prod != day_production[-1]:  # Don't add separator after the last item
                     item_separator = ttk.Separator(frame, orient='horizontal')
                     item_separator.grid(row=row_index, column=0, columnspan=2, sticky='ew', padx=15, pady=2)
                     row_index += 1
-                                    
+                    
 class WeeklyTransferView(WeeklyBaseView):
     def refresh(self):
         self.clear_day_frames()

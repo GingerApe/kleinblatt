@@ -287,11 +287,52 @@ class ProductionApp(tk.Tk):
 
             def delete_order():
                 if existing_order:
-                    if messagebox.askyesno("Confirm", "Delete this order?"):
-                        existing_order.delete_instance(recursive=True)
-                        row_frame.destroy()
-                        order_rows.remove(order_row_dict)
+                    scope_options = ["Delete only this order", "Delete this and all future orders"]
+                    
+                    # Only show subscription options if this is a subscription order
+                    has_subscription = existing_order.subscription_type > 0 and existing_order.from_date and existing_order.to_date
+                    
+                    if has_subscription:
+                        choice = messagebox.askyesnocancel(
+                            "Delete Order", 
+                            "Do you want to delete only this order?\n\n"
+                            "Yes - Delete only this order\n"
+                            "No - Delete this and all future orders in this subscription\n"
+                            "Cancel - Do not delete anything"
+                        )
+                        
+                        if choice is None:  # Cancel
+                            return
+                        
+                        with db.atomic():  # Transaction to ensure all operations succeed or fail together
+                            if choice:  # Yes - Delete only this order
+                                existing_order.delete_instance(recursive=True)
+                                messagebox.showinfo("Success", "Order deleted successfully!")
+                            else:  # No - Delete this and all future orders
+                                today = datetime.now().date()
+                                future_orders = list(Order.select().where(
+                                    (Order.from_date == existing_order.from_date) &
+                                    (Order.to_date == existing_order.to_date) &
+                                    (Order.delivery_date >= today)
+                                ))
+                                
+                                # Delete all future orders (including this one)
+                                deleted_count = 0
+                                for future_order in future_orders:
+                                    future_order.delete_instance(recursive=True)
+                                    deleted_count += 1
+                                
+                                messagebox.showinfo("Success", f"{deleted_count} orders deleted successfully!")
+                    else:
+                        # Not a subscription order, simple confirmation
+                        if messagebox.askyesno("Confirm", "Delete this order?"):
+                            existing_order.delete_instance(recursive=True)
+                            messagebox.showinfo("Success", "Order deleted successfully!")
+                    
+                    row_frame.destroy()
+                    order_rows.remove(order_row_dict)
                 else:
+                    # For new rows that haven't been saved yet
                     row_frame.destroy()
                     order_rows.remove(order_row_dict)
 
