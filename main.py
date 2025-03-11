@@ -16,7 +16,7 @@ class ProductionApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Production Tracker")
-        self.geometry("1200x800")
+        self.geometry("1400x800")
         
         self.db = db
         self.printer = SchedulePrinter()
@@ -816,7 +816,23 @@ class ProductionApp(tk.Tk):
                     os.system(f'xdg-open "{filepath}"')
         except Exception as e:
             messagebox.showwarning("Warning", f"PDF was created but couldn't be opened automatically: {filepath}")
-    
+
+VERSION = "0.9"
+def check_for_updates():
+    try:
+        # Replace with your actual repo URL
+        response = requests.get("https://api.github.com/repos/yourusername/yourrepo/releases/latest")
+        latest_version = response.json()["tag_name"]
+        
+        if latest_version > VERSION:
+            print(f"New version {latest_version} available!")
+            print("Please download the latest version from: ")
+            print("https://github.com/yourusername/yourrepo/releases/latest")
+            return True
+    except:
+        pass
+    return False
 if __name__ == "__main__":
+    check_for_updates()
     app = ProductionApp()
     app.mainloop()

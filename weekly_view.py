@@ -11,6 +11,11 @@ class WeeklyBaseView:
     def __init__(self, parent):
         self.parent = parent
         self.current_week = datetime.now().date()
+        self.canvases = {}
+        self.day_frames = {}
+        self.day_labels = {}
+        self.button_frames = {}
+        self.scrollbars = {}
         self.create_widgets()
         
     def create_widgets(self):
@@ -19,7 +24,7 @@ class WeeklyBaseView:
         nav_frame.pack(fill='x', padx=10, pady=5)
         
         ttk.Button(nav_frame, text="← Vorherige Woche", 
-                  command=self.previous_week).pack(side='left', padx=5)
+                command=self.previous_week).pack(side='left', padx=5)
 
         ttk.Button(nav_frame, text="Heute",
                     command=self.today_week).pack(side="left", padx=5)
@@ -28,49 +33,95 @@ class WeeklyBaseView:
         self.week_label.pack(side='left', padx=20)
         
         ttk.Button(nav_frame, text="Nächste Woche →", 
-                  command=self.next_week).pack(side='left', padx=5)
+                command=self.next_week).pack(side='left', padx=5)
         
-        # Create day frames for Monday to Sunday
-        self.day_frames = {}
-        self.day_labels = {}
-
+        # Create main container for days
         week_frame = ttk.Frame(self.parent)
         week_frame.pack(fill='both', expand=True, padx=10, pady=5)
         
+        # Make sure week_frame takes all available vertical space
+        self.parent.pack_propagate(False)
+        
         monday = self.get_monday_of_week()
-    
-
         days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        
+        # Configure column weights to ensure equal sizing
+        for i in range(7):
+            week_frame.columnconfigure(i, weight=1)
+        
+        # Configure row weight to ensure vertical expansion
+        week_frame.rowconfigure(0, weight=1)
+        
         for i, day in enumerate(days):
             date = monday + timedelta(days=i)
             date_str = date.strftime('%d.%m')
-
             day_label = f"{day} ({date_str})"
 
-            day_frame = ttk.LabelFrame(week_frame, text=day_label)
-            day_frame.grid(row=0, column=i, padx=2, pady=5, sticky='nsew')
-            week_frame.grid_columnconfigure(i, weight=1)
+            # Create labeled frame for each day
+            day_container = ttk.LabelFrame(week_frame, text=day_label)
+            day_container.grid(row=0, column=i, padx=2, pady=5, sticky='nsew')
+            self.day_labels[day] = day_container
             
-            # Create scrollable frame for items
-            canvas = tk.Canvas(day_frame, height=600)
-            scrollbar = ttk.Scrollbar(day_frame, orient="vertical", command=canvas.yview)
-            scrollable_frame = ttk.Frame(canvas)
+            # Create fixed button frame at top (for "+" button in delivery view)
+            button_frame = ttk.Frame(day_container)
+            button_frame.pack(side='top', fill='x')
+            self.button_frames[day] = button_frame
             
-            scrollable_frame.bind(
-                "<Configure>",
-                lambda e, canvas=canvas: canvas.configure(scrollregion=canvas.bbox("all"))
-            )
+            # Create scrollable content area - use full height
+            content_frame = ttk.Frame(day_container)
+            content_frame.pack(fill='both', expand=True)
             
-            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-            canvas.configure(yscrollcommand=scrollbar.set)
+            # Add vertical scrollbar
+            scrollbar = ttk.Scrollbar(content_frame, orient="vertical")
+            scrollbar.pack(side='right', fill='y')
+            self.scrollbars[day] = scrollbar
             
-            canvas.pack(side="left", fill="both", expand=True)
-            scrollbar.pack(side="right", fill="y")
+            # Create canvas for scrolling with fixed minimum height
+            canvas = tk.Canvas(content_frame, yscrollcommand=scrollbar.set, highlightthickness=0, height=600)
+            canvas.pack(side='left', fill='both', expand=True)
+            scrollbar.configure(command=canvas.yview)
+            self.canvases[day] = canvas
             
-            self.day_frames[day] = scrollable_frame
+            # Create inner frame for content
+            inner_frame = ttk.Frame(canvas)
+            canvas_window = canvas.create_window((0, 0), window=inner_frame, anchor='nw', tags='inner_frame')
+            self.day_frames[day] = inner_frame
+            
+            # Configure the canvas to adjust the scrollregion when the inner frame changes size
+            def configure_scroll_region(event, canvas=canvas):
+                canvas.configure(scrollregion=canvas.bbox("all"))
+            
+            # Configure the canvas window to expand to the width of the canvas
+            def configure_window_size(event, canvas=canvas, window=canvas_window):
+                canvas.itemconfig(window, width=event.width)
+            
+            inner_frame.bind("<Configure>", configure_scroll_region)
+            canvas.bind("<Configure>", configure_window_size)
+            
+            # Bind mousewheel events for scrolling
+            def on_mousewheel(event, canvas=canvas):
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            
+            # Bind specific canvas to mousewheel when mouse enters
+            def on_enter(event, canvas=canvas):
+                canvas.bind_all("<MouseWheel>", lambda e, c=canvas: on_mousewheel(e, c))
+            
+            # Unbind mousewheel when mouse leaves
+            def on_leave(event):
+                canvas.unbind_all("<MouseWheel>")
+            
+            canvas.bind("<Enter>", on_enter)
+            canvas.bind("<Leave>", on_leave)
+            
+            # Linux scrolling
+            canvas.bind("<Button-4>", lambda e, c=canvas: c.yview_scroll(-1, "units"))
+            canvas.bind("<Button-5>", lambda e, c=canvas: c.yview_scroll(1, "units"))
         
         self.update_week_label()
         self.highlight_current_day()
+        
+        # Force layout update to ensure proper dimensions
+        self.parent.update_idletasks()
         
     def previous_week(self):
         self.current_week -= timedelta(days=7)
@@ -78,7 +129,6 @@ class WeeklyBaseView:
         self.refresh()
     
     def today_week(self):
-        # Renamed from current_week to avoid confusion with the property
         self.current_week = datetime.now().date()
         self.update_week_label()
         self.update_day_labels()
@@ -90,7 +140,6 @@ class WeeklyBaseView:
         self.refresh()
 
     def update_day_labels(self):
-        # Update day frame labels with current dates
         monday = self.get_monday_of_week()
         days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         
@@ -99,12 +148,10 @@ class WeeklyBaseView:
             date_str = date.strftime('%d.%m')
             day_label = f"{day} ({date_str})"
             
-            # Update the label text
             if day in self.day_labels:
                 self.day_labels[day].configure(text=day_label)
     
     def update_week_label(self):
-        # Get Monday of current week
         monday = self.current_week - timedelta(days=self.current_week.weekday())
         sunday = monday + timedelta(days=6)
         self.week_label.config(
@@ -112,7 +159,7 @@ class WeeklyBaseView:
         )
     
     def clear_day_frames(self):
-        for frame in self.day_frames.values():
+        for day, frame in self.day_frames.items():
             for widget in frame.winfo_children():
                 widget.destroy()
     
@@ -122,9 +169,14 @@ class WeeklyBaseView:
     def highlight_current_day(self):
         today = datetime.now().date()
         day_name = today.strftime('%A')
-        if day_name in self.day_frames:
-            frame = self.day_frames[day_name]
-            frame.config(style='Green.TFrame')
+        if day_name in self.day_labels:
+            frame = self.day_labels[day_name]
+            # Apply a highlight style if available, otherwise use a background color
+            try:
+                frame.configure(style='Green.TLabelframe')
+            except:
+                # Fallback if style not available
+                frame.configure(background='green')
 
 class WeeklyDeliveryView(WeeklyBaseView):
     def __init__(self, parent, app, db):
@@ -353,9 +405,9 @@ class WeeklyDeliveryView(WeeklyBaseView):
         # Save Button
         ttk.Button(new_order_window, text="Save Order", 
                   command=save_order).pack(pady=10)
+
     def refresh(self):
         self.clear_day_frames()
-        self.new_order_widgets.clear()
         monday = self.get_monday_of_week()
         end_of_week = monday + timedelta(days=6)
         deliveries = get_delivery_schedule(monday, end_of_week)
@@ -366,13 +418,24 @@ class WeeklyDeliveryView(WeeklyBaseView):
             date_str = date.strftime('%d.%m')
             day_label = f"{day} ({date_str})"
             
-            # Find the day frame and update its label
-            for child in self.parent.winfo_children():
-                if isinstance(child, ttk.Frame):
-                    for grandchild in child.winfo_children():
-                        if isinstance(grandchild, ttk.LabelFrame) and day in grandchild['text']:
-                            grandchild['text'] = day_label
-                            break
+            # Update day labels
+            if day in self.day_labels:
+                self.day_labels[day].configure(text=day_label)
+        
+        # Clear button frames and add + buttons
+        for day in days:
+            # Clear existing buttons
+            for widget in self.button_frames[day].winfo_children():
+                widget.destroy()
+                
+            # Add new + button
+            add_order_button = ttk.Button(
+                self.button_frames[day],
+                text="+",
+                width=3,
+                command=lambda d=day: self.open_new_order_window(d)
+            )
+            add_order_button.pack(side='right', padx=5, pady=5)
                             
         # Group deliveries by day name
         deliveries_by_day = {day: [] for day in days}
@@ -380,47 +443,61 @@ class WeeklyDeliveryView(WeeklyBaseView):
             day_name = days[delivery.delivery_date.weekday()]
             deliveries_by_day[day_name].append(delivery)
         
-        # For each day, show its deliveries and add the "+" button
+        # Display deliveries for each day
         for day in days:
             frame = self.day_frames[day]
             
-            # Add the "+" button to each day frame - at the top
-            button_frame = ttk.Frame(frame)
-            button_frame.pack(side='top', fill='x', padx=5, pady=5)
-            add_order_button = ttk.Button(button_frame, text="+", width=3, 
-                                        command=lambda day=day: self.open_new_order_window(day))
-            add_order_button.pack(side='right')
-
-            # Display existing orders for this day
+            # Display existing orders for this day in the scrollable frame
             for delivery in deliveries_by_day[day]:
-                # Check if the order has any items
+                # Skip orders with no items
                 if not delivery.order_items.exists():
-                    continue  # Skip orders with no items
+                    continue
 
-                customer_frame = ttk.Frame(frame)
-                customer_frame.pack(fill='x', padx=5, pady=2)
-                customer_label = ttk.Label(customer_frame, 
-                                        text=delivery.customer.name,
-                                        font=('Arial', 16, 'bold'),
-                                        style='Clickable.TLabel',
-                                        wraplength=frame.winfo_width() if frame.winfo_width() > 0 else 150,
-                                        anchor='w')
-                customer_label.pack(anchor='w', fill='x')
-
-                # Dynamically set wraplength based on frame width
-                def update_wrap(event, label=customer_label):
-                    label.configure(wraplength=event.width - 5)  # Slight padding to avoid touching edges
-
-                customer_frame.bind("<Configure>", update_wrap)
-
-                # Clicking the label opens the order editor (edit mode)
-                customer_label.bind("<Button-1>", lambda e, order=delivery: self.open_order_editor(delivery.delivery_date, order))
+                # Create a frame for each customer with a border and padding
+                customer_frame = ttk.Frame(frame, relief='groove', borderwidth=1)
+                customer_frame.pack(fill='x', padx=5, pady=5, ipadx=5, ipady=5)
                 
-                # List order items
-                for order_item in delivery.order_items:
-                    item_text = f"• {order_item.item.name}: {order_item.amount:.1f}"
-                    ttk.Label(customer_frame, text=item_text).pack(anchor='w', padx=10)
+                # Customer name header
+                customer_label = ttk.Label(
+                    customer_frame,
+                    text=delivery.customer.name,
+                    font=('Arial', 12, 'bold'),
+                    style='Clickable.TLabel',
+                    wraplength=200,  # Fixed width to ensure text is visible
+                    anchor='w'
+                )
+                customer_label.pack(anchor='w', fill='x', padx=5, pady=5)
 
+                # Make label clickable
+                customer_label.bind(
+                    "<Button-1>", 
+                    lambda e, order=delivery: self.open_order_editor(delivery.delivery_date, order)
+                )
+                
+                # Add a separator
+                ttk.Separator(customer_frame, orient='horizontal').pack(fill='x', padx=5, pady=3)
+                
+                # Create a frame for items
+                items_frame = ttk.Frame(customer_frame)
+                items_frame.pack(fill='x', padx=5, pady=5)
+                
+                # List order items in a clean layout
+                for index, order_item in enumerate(delivery.order_items):
+                    item_frame = ttk.Frame(items_frame)
+                    item_frame.pack(fill='x', pady=2)
+                    
+                    item_text = f"{order_item.item.name}: {order_item.amount:.1f}"
+                    ttk.Label(
+                        item_frame, 
+                        text=item_text,
+                        font=('Arial', 11)
+                    ).pack(anchor='w', padx=10)
+
+            # Make sure canvases are properly configured for scrolling
+            if day in self.canvases:
+                self.canvases[day].update_idletasks()
+                self.canvases[day].configure(scrollregion=self.canvases[day].bbox("all"))
+                                
     def create_or_update_new_order_widget(self, day):
         frame = self.day_frames[day]
         if day not in self.new_order_widgets:
@@ -463,12 +540,15 @@ class WeeklyDeliveryView(WeeklyBaseView):
         """
         Opens a Toplevel window for creating a new order (if order is None) or editing an existing order.
         The delivery_date is pre-set; if prefill_customer is provided (for new orders), that value pre-fills the customer field.
+        Now handles subscription editing and updates all related future orders.
         """
         edit_window = tk.Toplevel(self.parent)
         if order:
             edit_window.title(f"Edit Order for {order.customer.name} on {order.delivery_date.strftime('%d.%m.%Y')}")
         else:
             edit_window.title(f"Create New Order for {delivery_date.strftime('%d.%m.%Y')}")
+        
+        edit_window.geometry("700x600")  # Set a larger size for the window
         
         # --- Delivery Date Section ---
         date_frame = ttk.Frame(edit_window)
@@ -490,13 +570,80 @@ class WeeklyDeliveryView(WeeklyBaseView):
             if prefill_customer:
                 customer_cb.set(prefill_customer)
         
+        # --- Subscription Type Section ---
+        subscription_frame = ttk.LabelFrame(edit_window, text="Subscription Settings")
+        subscription_frame.pack(fill='x', padx=10, pady=5)
+        
+        sub_var = tk.IntVar(value=0 if not order else order.subscription_type)
+        
+        # Create frame for subscription type
+        sub_type_frame = ttk.Frame(subscription_frame)
+        sub_type_frame.pack(fill='x', padx=5, pady=5)
+        ttk.Label(sub_type_frame, text="Subscription Type:").pack(side='left', padx=5)
+        
+        sub_types = {
+            0: "No subscription",
+            1: "Weekly",
+            2: "Bi-weekly",
+            3: "Every 3 weeks",
+            4: "Every 4 weeks"
+        }
+        
+        # Create dropdown for subscription type instead of radio buttons
+        sub_combo = ttk.Combobox(sub_type_frame, textvariable=sub_var, width=15, state="readonly")
+        sub_combo['values'] = [f"{v}" for k, v in sub_types.items()]
+        sub_combo.current(sub_var.get())  # Set to current value
+        sub_combo.pack(side='left', padx=5)
+        
+        # Create frame for date range
+        date_range_frame = ttk.Frame(subscription_frame)
+        date_range_frame.pack(fill='x', padx=5, pady=5)
+        ttk.Label(date_range_frame, text="From:").pack(side='left', padx=5)
+        from_date_entry = ttk.Entry(date_range_frame, width=12)
+        from_date_entry.pack(side='left', padx=5)
+        
+        ttk.Label(date_range_frame, text="To:").pack(side='left', padx=5)
+        to_date_entry = ttk.Entry(date_range_frame, width=12)
+        to_date_entry.pack(side='left', padx=5)
+        
+        # Set current subscription dates if editing
+        if order and order.from_date and order.to_date:
+            from_date_entry.insert(0, order.from_date.strftime('%d.%m.%Y'))
+            to_date_entry.insert(0, order.to_date.strftime('%d.%m.%Y'))
+        else:
+            # Default dates for new orders
+            today = datetime.now().date()
+            from_date_entry.insert(0, today.strftime('%d.%m.%Y'))
+            to_date_entry.insert(0, (today + timedelta(days=365)).strftime('%d.%m.%Y'))
+        
+        # Halbe Channel checkbox
+        halbe_var = tk.BooleanVar(value=False if not order else order.halbe_channel)
+        ttk.Checkbutton(subscription_frame, text="Halbe Channel", variable=halbe_var).pack(padx=5, pady=5)
+        
         # --- Order Items Section ---
-        items_frame = ttk.Frame(edit_window)
+        items_frame = ttk.LabelFrame(edit_window, text="Order Items")
         items_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Create scrollable frame for items
+        canvas = tk.Canvas(items_frame)
+        scrollbar = ttk.Scrollbar(items_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        # Configure scrolling
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
         item_rows = []
         
         def add_item_row(existing_order_item=None):
-            row_frame = ttk.Frame(items_frame)
+            row_frame = ttk.Frame(scrollable_frame)
             row_frame.pack(fill='x', pady=2)
             ttk.Label(row_frame, text="Item:").pack(side='left', padx=5)
             item_cb = AutocompleteCombobox(row_frame, width=20)
@@ -531,66 +678,245 @@ class WeeklyDeliveryView(WeeklyBaseView):
         add_item_btn = ttk.Button(edit_window, text="Add Item", command=lambda: add_item_row())
         add_item_btn.pack(pady=5)
         
+        # --- Update Type Frame for edit scope---
+        update_frame = ttk.LabelFrame(edit_window, text="Update Scope")
+        update_frame.pack(fill='x', padx=10, pady=5)
+        
+        update_type = tk.StringVar(value="current")
+        
+        ttk.Radiobutton(
+            update_frame, 
+            text="Update only this order", 
+            variable=update_type, 
+            value="current"
+        ).pack(anchor='w', padx=5, pady=2)
+        
+        ttk.Radiobutton(
+            update_frame, 
+            text="Update this and all future orders in this subscription", 
+            variable=update_type, 
+            value="future"
+        ).pack(anchor='w', padx=5, pady=2)
+        
+        ttk.Radiobutton(
+            update_frame, 
+            text="Create a new subscription with these settings", 
+            variable=update_type, 
+            value="new"
+        ).pack(anchor='w', padx=5, pady=2)
+        
         # --- Save Changes Button ---
         def save_changes():
-            new_date_str = delivery_date_entry.get()
             try:
-                new_date = datetime.strptime(new_date_str, "%d.%m.%Y").date()
-            except ValueError:
-                messagebox.showerror("Error", f"Invalid date format: {new_date_str}. Use dd.mm.yyyy.")
-                return
-
-            # Initialize order_obj with the existing order parameter
-            order_obj = order
-
-            if order_obj:  # This block is for updating an existing order
-                order_obj.delivery_date = new_date
-                order_obj.save()
-                for oi in order_obj.order_items:
-                    oi.delete_instance()
-            else:  # This block is for creating a new order
-                if customer_cb is None:
-                    messagebox.showerror("Error", "Customer selection is required.")
-                    return
-                customer_name = customer_cb.get()
-                if customer_name not in self.app.customers:
-                    messagebox.showerror("Error", "Invalid customer")
-                    return
-                order_obj = Order.create(
-                    customer=self.app.customers[customer_name],
-                    delivery_date=new_date,
-                    production_date=new_date - timedelta(days=7),  # Adjust production_date as needed
-                    from_date=new_date,
-                    to_date=new_date,
-                    subscription_type=0,  # No subscription by default
-                    halbe_channel=False,
-                    order_id=uuid.uuid4(),
-                    is_future=False
-                )
-
-            # Process order items
-            for row in item_rows:
-                item_name = row['item_cb'].get()
+                # Parse the delivery date
+                new_date_str = delivery_date_entry.get()
                 try:
-                    amount = float(row['amount_entry'].get())
+                    new_date = datetime.strptime(new_date_str, "%d.%m.%Y").date()
                 except ValueError:
-                    messagebox.showerror("Error", f"Invalid amount for item {item_name}.")
+                    messagebox.showerror("Error", f"Invalid date format: {new_date_str}. Use dd.mm.yyyy.")
                     return
-                if item_name not in self.app.items:
-                    messagebox.showerror("Error", f"Invalid item: {item_name}.")
-                    return
-                OrderItem.create(
-                    order=order_obj,  # Use order_obj instead of order
-                    item=self.app.items[item_name],
-                    amount=amount
-                )
-            messagebox.showinfo("Success", "Order saved successfully!")
-            edit_window.destroy()
-            self.refresh()
-            
-        save_btn = ttk.Button(edit_window, text="Save Changes", command=save_changes)
-        save_btn.pack(pady=10)
-
+                
+                # Parse subscription dates
+                if sub_var.get() > 0:  # If it's a subscription
+                    try:
+                        from_date = datetime.strptime(from_date_entry.get(), "%d.%m.%Y").date()
+                        to_date = datetime.strptime(to_date_entry.get(), "%d.%m.%Y").date()
+                        if from_date > to_date:
+                            messagebox.showerror("Error", "From date must be before To date.")
+                            return
+                    except ValueError:
+                        messagebox.showerror("Error", "Invalid date format for subscription range. Use dd.mm.yyyy.")
+                        return
+                else:
+                    from_date = None
+                    to_date = None
+                
+                # Initialize order_obj with the existing order parameter
+                order_obj = order
+                
+                # Gather item data
+                order_items_data = []
+                for row in item_rows:
+                    item_name = row['item_cb'].get()
+                    try:
+                        amount = float(row['amount_entry'].get())
+                    except ValueError:
+                        messagebox.showerror("Error", f"Invalid amount for item {item_name}.")
+                        return
+                    if item_name not in self.app.items:
+                        messagebox.showerror("Error", f"Invalid item: {item_name}.")
+                        return
+                    order_items_data.append((item_name, amount))
+                
+                with self.db.atomic():  # Transaction to ensure all operations succeed or fail together
+                    if update_type.get() == "current":
+                        # Only update the current order
+                        if order_obj:  # Editing existing order
+                            order_obj.delivery_date = new_date
+                            order_obj.subscription_type = sub_var.get()
+                            order_obj.from_date = from_date
+                            order_obj.to_date = to_date
+                            order_obj.halbe_channel = halbe_var.get()
+                            order_obj.save()
+                            
+                            # Delete existing items
+                            for oi in order_obj.order_items:
+                                oi.delete_instance()
+                            
+                            # Create new items
+                            for item_name, amount in order_items_data:
+                                OrderItem.create(
+                                    order=order_obj,
+                                    item=self.app.items[item_name],
+                                    amount=amount
+                                )
+                        else:  # Creating new order
+                            if customer_cb is None:
+                                messagebox.showerror("Error", "Customer selection is required.")
+                                return
+                            customer_name = customer_cb.get()
+                            if customer_name not in self.app.customers:
+                                messagebox.showerror("Error", "Invalid customer")
+                                return
+                            
+                            # Calculate production date based on items
+                            max_days = max(self.app.items[item_name].total_days for item_name, _ in order_items_data)
+                            production_date = new_date - timedelta(days=max_days)
+                            
+                            order_obj = Order.create(
+                                customer=self.app.customers[customer_name],
+                                delivery_date=new_date,
+                                production_date=production_date,
+                                from_date=from_date,
+                                to_date=to_date,
+                                subscription_type=sub_var.get(),
+                                halbe_channel=halbe_var.get(),
+                                order_id=uuid.uuid4(),
+                                is_future=False if new_date <= datetime.now().date() else True
+                            )
+                            
+                            # Create order items
+                            for item_name, amount in order_items_data:
+                                OrderItem.create(
+                                    order=order_obj,
+                                    item=self.app.items[item_name],
+                                    amount=amount
+                                )
+                            
+                    elif update_type.get() == "future":
+                        if not order_obj:
+                            messagebox.showerror("Error", "Cannot update future orders for a new order.")
+                            return
+                        
+                        # Find all subscription orders that are part of this subscription and in the future
+                        today = datetime.now().date()
+                        future_orders = list(Order.select().where(
+                            (Order.from_date == order_obj.from_date) &
+                            (Order.to_date == order_obj.to_date) &
+                            (Order.delivery_date >= today)
+                        ))
+                        
+                        # Update this order and all future orders
+                        for future_order in future_orders:
+                            # Only update the order if it's this order or it's in the future
+                            if future_order.id == order_obj.id or future_order.delivery_date >= today:
+                                # Update subscription properties
+                                future_order.subscription_type = sub_var.get()
+                                future_order.from_date = from_date
+                                future_order.to_date = to_date
+                                future_order.halbe_channel = halbe_var.get()
+                                future_order.save()
+                                
+                                # Only update items for this specific order
+                                if future_order.id == order_obj.id:
+                                    # Delete existing items
+                                    for oi in future_order.order_items:
+                                        oi.delete_instance()
+                                    
+                                    # Create new items 
+                                    for item_name, amount in order_items_data:
+                                        OrderItem.create(
+                                            order=future_order,
+                                            item=self.app.items[item_name],
+                                            amount=amount
+                                        )
+                        
+                    elif update_type.get() == "new":
+                        # Create a new subscription based on these settings
+                        if not order_obj:
+                            # Need customer for new order
+                            if customer_cb is None:
+                                messagebox.showerror("Error", "Customer selection is required.")
+                                return
+                            customer_name = customer_cb.get()
+                            if customer_name not in self.app.customers:
+                                messagebox.showerror("Error", "Invalid customer")
+                                return
+                            customer = self.app.customers[customer_name]
+                        else:
+                            # Use customer from existing order
+                            customer = order_obj.customer
+                        
+                        # Calculate production date
+                        max_days = max(self.app.items[item_name].total_days for item_name, _ in order_items_data)
+                        production_date = new_date - timedelta(days=max_days)
+                        
+                        # Create the first order of the new subscription
+                        new_order = Order.create(
+                            customer=customer,
+                            delivery_date=new_date,
+                            production_date=production_date,
+                            from_date=from_date,
+                            to_date=to_date,
+                            subscription_type=sub_var.get(),
+                            halbe_channel=halbe_var.get(),
+                            order_id=uuid.uuid4(),
+                            is_future=False if new_date <= datetime.now().date() else True
+                        )
+                        
+                        # Create order items
+                        for item_name, amount in order_items_data:
+                            OrderItem.create(
+                                order=new_order,
+                                item=self.app.items[item_name],
+                                amount=amount
+                            )
+                        
+                        # Generate future subscription orders if applicable
+                        if sub_var.get() > 0:
+                            future_orders = generate_subscription_orders(new_order)
+                            for future_order_data in future_orders:
+                                future_order = Order.create(
+                                    **future_order_data,
+                                    order_id=uuid.uuid4()
+                                )
+                                # Copy items to future order
+                                for item_name, amount in order_items_data:
+                                    OrderItem.create(
+                                        order=future_order,
+                                        item=self.app.items[item_name],
+                                        amount=amount
+                                    )
+                
+                messagebox.showinfo("Success", "Order saved successfully!")
+                edit_window.destroy()
+                self.refresh()
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"An error occurred: {str(e)}")
+        
+        # Create buttons frame
+        buttons_frame = ttk.Frame(edit_window)
+        buttons_frame.pack(fill='x', padx=10, pady=10)
+        
+        # Save Button
+        save_btn = ttk.Button(buttons_frame, text="Save Changes", command=save_changes)
+        save_btn.pack(side='right', padx=5)
+        
+        # Cancel Button
+        cancel_btn = ttk.Button(buttons_frame, text="Cancel", command=edit_window.destroy)
+        cancel_btn.pack(side='right', padx=5)
+        
         # --- Delete Order Button ---
         if order:
             def delete_order():
@@ -600,9 +926,9 @@ class WeeklyDeliveryView(WeeklyBaseView):
                     edit_window.destroy()
                     self.refresh()
 
-            delete_btn = ttk.Button(edit_window, text="Delete Order", command=delete_order)
-            delete_btn.pack(pady=5)
-
+            delete_btn = ttk.Button(buttons_frame, text="Delete Order", command=delete_order)
+            delete_btn.pack(side='left', padx=5)
+            
 class WeeklyProductionView(WeeklyBaseView):
     def refresh(self):
         self.clear_day_frames()
@@ -620,34 +946,59 @@ class WeeklyProductionView(WeeklyBaseView):
             date_str = date.strftime('%d.%m')
             day_label = f"{day} ({date_str})"
             
-            # Find the day frame and update its label
-            for child in self.parent.winfo_children():
-                if isinstance(child, ttk.Frame):
-                    for grandchild in child.winfo_children():
-                        if isinstance(grandchild, ttk.LabelFrame) and day in grandchild['text']:
-                            grandchild['text'] = day_label
-                            break
-        for prod in production_data:
-            day_idx = prod.order.production_date.weekday()  # Changed from prod.production_date
-            day_name = days[day_idx]
-            frame = self.day_frames[day_name]
+            # Update day labels
+            if day in self.day_labels:
+                self.day_labels[day].configure(text=day_label)
             
-            # Create item frame
-            item_frame = ttk.Frame(frame)
-            item_frame.pack(fill='x', padx=5, pady=2)
+            # Get the frame for this day
+            frame = self.day_frames[day]
             
-            # Display item name and amount on one line
-            item_text = f"{prod.item.name}: {prod.total_amount:.1f}"
-            ttk.Label(item_frame, text=item_text, font=('Arial', 16, 'bold')).pack(anchor='w')
-
-            #amount_text = f"Amount: {prod.total_amount:.1f}"
-            #seeds_text = f"Seeds: {prod.total_amount * prod.item.seed_quantity:.1f}g"  # Changed to access through item
-            substrate_text = f"Substrate: {prod.item.substrate}"  # Changed to access through item
+            # Create a structured layout with a grid
+            # First create two columns with fixed width
+            frame.columnconfigure(0, weight=1, minsize=100)  # Item column
+            frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
             
-            #ttk.Label(item_frame, text=amount_text).pack(anchor='w', padx=10)
-            #ttk.Label(item_frame, text=seeds_text).pack(anchor='w', padx=10)
-            ttk.Label(item_frame, text=substrate_text).pack(anchor='w', padx=10)
-
+            # Add headers
+            ttk.Label(frame, text="Item", font=('Arial', 12, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=5)
+            ttk.Label(frame, text="Amount", font=('Arial', 12, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=5)
+            
+            # Add a separator
+            separator = ttk.Separator(frame, orient='horizontal')
+            separator.grid(row=1, column=0, columnspan=2, sticky='ew', padx=3, pady=3)
+            
+            # Filter production items for this day
+            day_production = []
+            for prod in production_data:
+                if prod.order.production_date.weekday() == i:
+                    day_production.append(prod)
+            
+            # Sort items alphabetically for better organization
+            day_production.sort(key=lambda x: x.item.name)
+            
+            # Add each production item in a grid layout
+            row_index = 2  # Start after header and separator
+            for prod in day_production:
+                # Item name
+                item_label = ttk.Label(frame, text=prod.item.name, font=('Arial', 11))
+                item_label.grid(row=row_index, column=0, sticky='w', padx=5, pady=3)
+                
+                # Amount with right alignment
+                amount_label = ttk.Label(frame, text=f"{prod.total_amount:.1f}", font=('Arial', 11))
+                amount_label.grid(row=row_index, column=1, sticky='e', padx=5, pady=3)
+                
+                # Add substrate info
+                #row_index += 1
+                #substrate_text = f"Substrate: {prod.item.substrate}"
+                #substrate_label = ttk.Label(frame, text=substrate_text, font=('Arial', 9))
+                #substrate_label.grid(row=row_index, column=0, columnspan=2, sticky='w', padx=15, pady=1)
+                
+                # Add a separator between items
+                row_index += 1
+                if prod != day_production[-1]:  # Don't add separator after the last item
+                    item_separator = ttk.Separator(frame, orient='horizontal')
+                    item_separator.grid(row=row_index, column=0, columnspan=2, sticky='ew', padx=15, pady=2)
+                    row_index += 1
+                                    
 class WeeklyTransferView(WeeklyBaseView):
     def refresh(self):
         self.clear_day_frames()
@@ -665,27 +1016,60 @@ class WeeklyTransferView(WeeklyBaseView):
             date_str = date.strftime('%d.%m')
             day_label = f"{day} ({date_str})"
             
-            # Find the day frame and update its label
-            for child in self.parent.winfo_children():
-                if isinstance(child, ttk.Frame):
-                    for grandchild in child.winfo_children():
-                        if isinstance(grandchild, ttk.LabelFrame) and day in grandchild['text']:
-                            grandchild['text'] = day_label
-                            break
-
-        for transfer in transfer_data:
-            day_idx = transfer['date'].weekday()
-            day_name = days[day_idx]
-            frame = self.day_frames[day_name]
+            # Update day labels
+            if day in self.day_labels:
+                self.day_labels[day].configure(text=day_label)
             
-            # Create item frame
-            item_frame = ttk.Frame(frame)
-            item_frame.pack(fill='x', padx=5, pady=2)
+            # Get the frame for this day
+            frame = self.day_frames[day]
             
-            # Display item name and transfer amount on one line
-            item_text = f"{transfer['item']}: {transfer['amount']:.1f}"
-            ttk.Label(item_frame, text=item_text, font=('Arial', 16, 'bold')).pack(anchor='w')
-
+            # Create a structured layout with a grid
+            # Set up two columns with fixed width
+            frame.columnconfigure(0, weight=1, minsize=100)  # Item column
+            frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
+            
+            # Add headers
+            ttk.Label(frame, text="Item", font=('Arial', 12, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=5)
+            ttk.Label(frame, text="Amount", font=('Arial', 12, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=5)
+            
+            # Add a separator
+            separator = ttk.Separator(frame, orient='horizontal')
+            separator.grid(row=1, column=0, columnspan=2, sticky='ew', padx=3, pady=3)
+            
+            # Filter transfers for this day
+            day_transfers = []
+            for transfer in transfer_data:
+                if transfer['date'].weekday() == i:
+                    day_transfers.append(transfer)
+            
+            # Sort items alphabetically for better organization
+            day_transfers.sort(key=lambda x: x['item'])
+            
+            # Add each transfer item in a grid layout
+            row_index = 2  # Start after header and separator
+            for transfer in day_transfers:
+                # Item name
+                item_label = ttk.Label(frame, text=transfer['item'], font=('Arial', 11))
+                item_label.grid(row=row_index, column=0, sticky='w', padx=5, pady=3)
+                
+                # Amount with right alignment
+                amount_label = ttk.Label(frame, text=f"{transfer['amount']:.1f}", font=('Arial', 11))
+                amount_label.grid(row=row_index, column=1, sticky='e', padx=5, pady=3)
+                
+                # Add substrate info if available
+                if 'substrate' in transfer:
+                    row_index += 1
+                    substrate_text = f"Substrate: {transfer['substrate']}"
+                    substrate_label = ttk.Label(frame, text=substrate_text, font=('Arial', 9))
+                    substrate_label.grid(row=row_index, column=0, columnspan=2, sticky='w', padx=15, pady=1)
+                
+                # Add a separator between items
+                row_index += 1
+                if transfer != day_transfers[-1]:  # Don't add separator after the last item
+                    item_separator = ttk.Separator(frame, orient='horizontal')
+                    item_separator.grid(row=row_index, column=0, columnspan=2, sticky='ew', padx=15, pady=2)
+                    row_index += 1
+                    
 def format_date(date):
     """Format date as DD.MM.YYYY"""
     return date.strftime('%d.%m.%Y')
