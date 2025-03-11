@@ -1,5 +1,6 @@
 # Modify your customer_view.py
 from tkinter import messagebox, ttk
+import tkinter as tk
 from widgets import AutocompleteCombobox
 from database import Customer
 
@@ -47,6 +48,7 @@ class CustomerView:
         btn_frame = ttk.Frame(list_frame)
         btn_frame.pack(fill='x', padx=5, pady=5)
         
+        ttk.Button(btn_frame, text="Add", command=self.add_customer).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Edit", command=self.edit_customer).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Delete", command=self.delete_customer).pack(side='left', padx=5)
 
@@ -101,6 +103,55 @@ class CustomerView:
         self.name_entry.set(self.current_customer.name)
         self.save_btn.configure(text="Update")
         self.cancel_btn.pack(side='left', padx=5)
+
+    def add_customer(self):
+        # Create popup window
+        popup = tk.Toplevel(self.parent)
+        popup.title("Add New Customer")
+        popup.geometry("300x150")
+        
+        # Make window modal
+        popup.transient(self.parent)
+        popup.grab_set()
+        
+        # Center the window
+        popup.geometry("+%d+%d" % (
+            self.parent.winfo_rootx() + self.parent.winfo_width()/2 - 150,
+            self.parent.winfo_rooty() + self.parent.winfo_height()/2 - 75))
+
+        # Create and pack widgets
+        frame = ttk.Frame(popup, padding="20")
+        frame.pack(fill='both', expand=True)
+
+        ttk.Label(frame, text="Customer Name:").pack(pady=(0, 10))
+        name_entry = ttk.Entry(frame, width=30)
+        name_entry.pack(pady=(0, 20))
+        name_entry.focus()  # Set focus to entry
+
+        def save():
+            name = name_entry.get().strip()
+            if not name:
+                messagebox.showerror("Error", "Please enter a customer name", parent=popup)
+                return
+            
+            try:
+                Customer.create(name=name)
+                messagebox.showinfo("Success", "Customer added successfully", parent=popup)
+                popup.destroy()
+                self.refresh_customer_list()
+            except Exception as e:
+                messagebox.showerror("Error", str(e), parent=popup)
+
+        # Button frame
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill='x')
+
+        ttk.Button(btn_frame, text="Save", command=save).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=popup.destroy).pack(side='right', padx=5)
+
+        # Bind Enter key to save
+        popup.bind('<Return>', lambda e: save())
+        popup.bind('<Escape>', lambda e: popup.destroy())
 
     def cancel_edit(self):
         self.edit_mode = False
