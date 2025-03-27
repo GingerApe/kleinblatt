@@ -461,8 +461,11 @@ class WeeklyDeliveryView(WeeklyBaseView):
         for day in days:
             frame = self.day_frames[day]
             
+            # Sort deliveries by customer name alphabetically
+            day_deliveries = sorted(deliveries_by_day[day], key=lambda d: d.customer.name.lower())
+            
             # Display existing orders for this day in the scrollable frame
-            for delivery in deliveries_by_day[day]:
+            for delivery in day_deliveries:
                 # Skip orders with no items
                 if not delivery.order_items.exists():
                     continue
@@ -495,8 +498,11 @@ class WeeklyDeliveryView(WeeklyBaseView):
                 items_frame = ttk.Frame(customer_frame)
                 items_frame.pack(fill='x', padx=5, pady=5)
                 
+                # Sort order items alphabetically by name
+                sorted_items = sorted(delivery.order_items, key=lambda item: item.item.name.lower())
+                
                 # List order items in a clean layout
-                for index, order_item in enumerate(delivery.order_items):
+                for index, order_item in enumerate(sorted_items):
                     item_frame = ttk.Frame(items_frame)
                     item_frame.pack(fill='x', pady=2)
                     
@@ -711,7 +717,9 @@ class WeeklyDeliveryView(WeeklyBaseView):
             item_rows.append(item_dict)
         
         if order:
-            for oi in order.order_items:
+            # Sort order items alphabetically by item name
+            sorted_order_items = sorted(order.order_items, key=lambda item: item.item.name.lower())
+            for oi in sorted_order_items:
                 add_item_row(existing_order_item=oi)
         else:
             add_item_row()  # start with one empty item row
@@ -1015,18 +1023,6 @@ class WeeklyProductionView(WeeklyBaseView):
             # Get the frame for this day
             frame = self.day_frames[day]
             
-            # Create a structured layout with a grid
-            frame.columnconfigure(0, weight=1, minsize=100)  # Item column
-            frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
-            
-            # Add headers
-            ttk.Label(frame, text="Artikel", font=('Arial', 12, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=5)
-            ttk.Label(frame, text="Menge", font=('Arial', 12, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=5)
-            
-            # Add a separator
-            separator = ttk.Separator(frame, orient='horizontal')
-            separator.grid(row=1, column=0, columnspan=2, sticky='ew', padx=3, pady=3)
-            
             # Filter production items for this day
             day_production = []
             for prod in production_data:
@@ -1034,32 +1030,66 @@ class WeeklyProductionView(WeeklyBaseView):
                     day_production.append(prod)
                     day_has_items[day] = True
             
-            # Sort items alphabetically for better organization
-            day_production.sort(key=lambda x: x.item.name)
-            
-            # Add each production item in a grid layout
-            row_index = 2  # Start after header and separator
-            for prod in day_production:
-                # Item name
-                item_label = ttk.Label(frame, text=prod.item.name, font=('Arial', 11))
-                item_label.grid(row=row_index, column=0, sticky='w', padx=5, pady=3)
-                
-                # Amount with right alignment
-                amount_label = ttk.Label(frame, text=f"{prod.total_amount:.1f}", font=('Arial', 11))
-                amount_label.grid(row=row_index, column=1, sticky='e', padx=5, pady=3)
-                
-                # Add a separator between items
-                row_index += 1
-                if prod != day_production[-1]:  # Don't add separator after the last item
-                    item_separator = ttk.Separator(frame, orient='horizontal')
-                    item_separator.grid(row=row_index, column=0, columnspan=2, sticky='ew', padx=15, pady=2)
-                    row_index += 1
-            
-            # If no items for this day, add a message (especially for Sunday)
+            # If no items for this day, add a message
             if not day_production:
                 no_items_label = ttk.Label(frame, text="No production items", font=('Arial', 10, 'italic'))
-                no_items_label.grid(row=2, column=0, columnspan=2, sticky='w', padx=5, pady=10)
+                no_items_label.pack(padx=5, pady=10, anchor='w')
+                continue
                 
+            # Group by customer
+            customers_production = {}
+            for prod in day_production:
+                try:
+                    customer_name = prod.order.customer.name
+                except:
+                    # Handle case where customer doesn't exist
+                    customer_name = "Unknown Customer"
+                
+                if customer_name not in customers_production:
+                    customers_production[customer_name] = []
+                customers_production[customer_name].append(prod)
+            
+            # Get sorted list of customer names
+            sorted_customers = sorted(customers_production.keys(), key=str.lower)
+            
+            # Create a scrollable container for all customer data
+            main_container = ttk.Frame(frame)
+            main_container.pack(fill='both', expand=True)
+            
+            # Add each customer section
+            for customer_name in sorted_customers:
+                # Create a labeled frame for each customer
+                customer_frame = ttk.LabelFrame(main_container, text=customer_name)
+                customer_frame.pack(fill='x', expand=True, padx=5, pady=5)
+                
+                # Configure grid columns for item layout
+                customer_frame.columnconfigure(0, weight=1, minsize=100)  # Item column
+                customer_frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
+                
+                # Add headers
+                ttk.Label(customer_frame, text="Artikel", font=('Arial', 11, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=3)
+                ttk.Label(customer_frame, text="Menge", font=('Arial', 11, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=3)
+                
+                # Add separator
+                separator = ttk.Separator(customer_frame, orient='horizontal')
+                separator.grid(row=1, column=0, columnspan=2, sticky='ew', padx=3, pady=2)
+                
+                # Sort items alphabetically within customer
+                customer_items = sorted(customers_production[customer_name], key=lambda x: x.item.name.lower())
+                
+                # Add each production item in a grid layout
+                row_index = 2  # Start after header and separator
+                for prod in customer_items:
+                    # Item name
+                    item_label = ttk.Label(customer_frame, text=prod.item.name, font=('Arial', 10))
+                    item_label.grid(row=row_index, column=0, sticky='w', padx=5, pady=2)
+                    
+                    # Amount with right alignment
+                    amount_label = ttk.Label(customer_frame, text=f"{prod.total_amount:.1f}", font=('Arial', 10))
+                    amount_label.grid(row=row_index, column=1, sticky='e', padx=5, pady=2)
+                    
+                    row_index += 1
+            
         # After processing all days, check if Sunday has no items consistently
         if not day_has_items['Sonntag']:
             # Check if there are any Sunday orders in the database
@@ -1075,7 +1105,7 @@ class WeeklyProductionView(WeeklyBaseView):
                                            text="Hinweis: Keine Sonntagsproduktionsdaten in der Datenbank gefunden", 
                                            font=('Arial', 9), 
                                            foreground='red')
-                diagnostic_label.grid(row=3, column=0, columnspan=2, sticky='w', padx=5, pady=5)
+                diagnostic_label.pack(padx=5, pady=5, anchor='w')
                     
 class WeeklyTransferView(WeeklyBaseView):
     def refresh(self):
@@ -1101,53 +1131,125 @@ class WeeklyTransferView(WeeklyBaseView):
             # Get the frame for this day
             frame = self.day_frames[day]
             
-            # Create a structured layout with a grid
-            # Set up two columns with fixed width
-            frame.columnconfigure(0, weight=1, minsize=100)  # Item column
-            frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
-            
-            # Add headers
-            ttk.Label(frame, text="Artikel", font=('Arial', 12, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=5)
-            ttk.Label(frame, text="Menge", font=('Arial', 12, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=5)
-            
-            # Add a separator
-            separator = ttk.Separator(frame, orient='horizontal')
-            separator.grid(row=1, column=0, columnspan=2, sticky='ew', padx=3, pady=3)
-            
             # Filter transfers for this day
             day_transfers = []
             for transfer in transfer_data:
                 if transfer['date'].weekday() == i:
                     day_transfers.append(transfer)
             
-            # Sort items alphabetically for better organization
-            day_transfers.sort(key=lambda x: x['item'])
+            # If no transfers for this day, add a message
+            if not day_transfers:
+                no_items_label = ttk.Label(frame, text="No transfer items", font=('Arial', 10, 'italic'))
+                no_items_label.pack(padx=5, pady=10, anchor='w')
+                continue
             
-            # Add each transfer item in a grid layout
-            row_index = 2  # Start after header and separator
-            for transfer in day_transfers:
-                # Item name
-                item_label = ttk.Label(frame, text=transfer['item'], font=('Arial', 11))
-                item_label.grid(row=row_index, column=0, sticky='w', padx=5, pady=3)
+            # Check if transfers have customer information
+            has_customer_info = all('customer' in transfer for transfer in day_transfers)
+            
+            if has_customer_info:
+                # Group by customer
+                customers_transfers = {}
+                for transfer in day_transfers:
+                    try:
+                        customer_name = transfer['customer'] 
+                        if not customer_name:  # Handle empty customer name
+                            customer_name = "Unknown Customer"
+                    except:
+                        # Handle case where customer is missing
+                        customer_name = "Unknown Customer"
+                        
+                    if customer_name not in customers_transfers:
+                        customers_transfers[customer_name] = []
+                    customers_transfers[customer_name].append(transfer)
                 
-                # Amount with right alignment
-                amount_label = ttk.Label(frame, text=f"{transfer['amount']:.1f}", font=('Arial', 11))
-                amount_label.grid(row=row_index, column=1, sticky='e', padx=5, pady=3)
+                # Get sorted list of customer names
+                sorted_customers = sorted(customers_transfers.keys(), key=str.lower)
                 
-                # Add substrate info if available
-                if 'substrate' in transfer:
-                    row_index += 1
-                    substrate_text = f"Substrate: {transfer['substrate']}"
-                    substrate_label = ttk.Label(frame, text=substrate_text, font=('Arial', 9))
-                    substrate_label.grid(row=row_index, column=0, columnspan=2, sticky='w', padx=15, pady=1)
+                # Create a scrollable container for all customer data
+                main_container = ttk.Frame(frame)
+                main_container.pack(fill='both', expand=True)
                 
-                # Add a separator between items
-                row_index += 1
-                if transfer != day_transfers[-1]:  # Don't add separator after the last item
-                    item_separator = ttk.Separator(frame, orient='horizontal')
-                    item_separator.grid(row=row_index, column=0, columnspan=2, sticky='ew', padx=15, pady=2)
-                    row_index += 1
+                # Add each customer section
+                for customer_name in sorted_customers:
+                    # Create a labeled frame for each customer
+                    customer_frame = ttk.LabelFrame(main_container, text=customer_name)
+                    customer_frame.pack(fill='x', expand=True, padx=5, pady=5)
                     
+                    # Configure grid columns for item layout
+                    customer_frame.columnconfigure(0, weight=1, minsize=100)  # Item column
+                    customer_frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
+                    
+                    # Add headers
+                    ttk.Label(customer_frame, text="Artikel", font=('Arial', 11, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=3)
+                    ttk.Label(customer_frame, text="Menge", font=('Arial', 11, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=3)
+                    
+                    # Add separator
+                    separator = ttk.Separator(customer_frame, orient='horizontal')
+                    separator.grid(row=1, column=0, columnspan=2, sticky='ew', padx=3, pady=2)
+                    
+                    # Sort items alphabetically within customer
+                    customer_items = sorted(customers_transfers[customer_name], key=lambda x: x['item'].lower())
+                    
+                    # Add each transfer item in a grid layout
+                    row_index = 2  # Start after header and separator
+                    for transfer in customer_items:
+                        # Item name
+                        item_label = ttk.Label(customer_frame, text=transfer['item'], font=('Arial', 10))
+                        item_label.grid(row=row_index, column=0, sticky='w', padx=5, pady=2)
+                        
+                        # Amount with right alignment
+                        amount_label = ttk.Label(customer_frame, text=f"{transfer['amount']:.1f}", font=('Arial', 10))
+                        amount_label.grid(row=row_index, column=1, sticky='e', padx=5, pady=2)
+                        
+                        # Add substrate info if available
+                        if 'substrate' in transfer:
+                            row_index += 1
+                            substrate_text = f"Substrate: {transfer['substrate']}"
+                            substrate_label = ttk.Label(customer_frame, text=substrate_text, font=('Arial', 9))
+                            substrate_label.grid(row=row_index, column=0, columnspan=2, sticky='w', padx=15, pady=1)
+                        
+                        row_index += 1
+            else:
+                # Create a structured layout with a grid (as before for no customer info)
+                frame.columnconfigure(0, weight=1, minsize=100)  # Item column
+                frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
+                
+                # Add headers
+                ttk.Label(frame, text="Artikel", font=('Arial', 12, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=5)
+                ttk.Label(frame, text="Menge", font=('Arial', 12, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=5)
+                
+                # Add a separator
+                separator = ttk.Separator(frame, orient='horizontal')
+                separator.grid(row=1, column=0, columnspan=2, sticky='ew', padx=3, pady=3)
+                
+                # Sort items alphabetically 
+                day_transfers.sort(key=lambda x: x['item'].lower())
+                
+                # Add each transfer item in a grid layout
+                row_index = 2  # Start after header and separator
+                for transfer in day_transfers:
+                    # Item name
+                    item_label = ttk.Label(frame, text=transfer['item'], font=('Arial', 11))
+                    item_label.grid(row=row_index, column=0, sticky='w', padx=5, pady=3)
+                    
+                    # Amount with right alignment
+                    amount_label = ttk.Label(frame, text=f"{transfer['amount']:.1f}", font=('Arial', 11))
+                    amount_label.grid(row=row_index, column=1, sticky='e', padx=5, pady=3)
+                    
+                    # Add substrate info if available
+                    if 'substrate' in transfer:
+                        row_index += 1
+                        substrate_text = f"Substrate: {transfer['substrate']}"
+                        substrate_label = ttk.Label(frame, text=substrate_text, font=('Arial', 9))
+                        substrate_label.grid(row=row_index, column=0, columnspan=2, sticky='w', padx=15, pady=1)
+                    
+                    # Add a separator between items
+                    row_index += 1
+                    if transfer != day_transfers[-1]:  # Don't add separator after the last item
+                        item_separator = ttk.Separator(frame, orient='horizontal')
+                        item_separator.grid(row=row_index, column=0, columnspan=2, sticky='ew', padx=15, pady=2)
+                        row_index += 1
+
 def format_date(date):
     """Format date as DD.MM.YYYY"""
     return date.strftime('%d.%m.%Y')

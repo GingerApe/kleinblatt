@@ -82,6 +82,10 @@ class SchedulePrinter:
                     else:
                         # Transfer schedule: value is the amount
                         day_items.append((item, str(value)))
+                
+                # Sort items alphabetically (case-insensitive)
+                day_items.sort(key=lambda x: x[0].lower())
+                
                 days_data.append(day_items)
                 if len(day_items) > max_rows:
                     max_rows = len(day_items)
@@ -190,7 +194,9 @@ class SchedulePrinter:
                     'halbe_channel': delivery.halbe_channel
                 }
             
-            for item in delivery.order_items:
+            # Sort order items by name before adding them
+            sorted_items = sorted(delivery.order_items, key=lambda item: item.item.name.lower())
+            for item in sorted_items:
                 # Format the amount: remove decimals if it's a whole number
                 amount_str = str(int(item.amount)) if item.amount == int(item.amount) else str(item.amount)
                 daily_data[date_str][customer_name]['items'].append(f"{item.item.name}: {amount_str}")
@@ -199,7 +205,12 @@ class SchedulePrinter:
         formatted_data = {}
         for date_str, customers in daily_data.items():
             formatted_data[date_str] = []
-            for customer_name, info in customers.items():
+            
+            # Sort customers alphabetically (case-insensitive)
+            sorted_customers = sorted(customers.keys(), key=str.lower)
+            
+            for customer_name in sorted_customers:
+                info = customers[customer_name]
                 half_channel_status = "Ja" if info['halbe_channel'] else "Nein"
                 formatted_items = ", ".join(info['items'])
                 
@@ -233,9 +244,15 @@ class SchedulePrinter:
             
             for item in prod.order_items:
                 if item.item.name not in daily_items[date_str]:
+                    # Safely get halbe_channel value (fail gracefully if customer doesn't exist)
+                    try:
+                        half_channel = "Ja" if prod.halbe_channel else "Nein"
+                    except:
+                        half_channel = "Nein"  # Default if we can't determine
+                    
                     daily_items[date_str][item.item.name] = {
                         'amount': 0,
-                        'half_channel': "Ja" if prod.halbe_channel else "Nein"
+                        'half_channel': half_channel
                     }
                 
                 daily_items[date_str][item.item.name]['amount'] += item.amount
@@ -256,20 +273,24 @@ class SchedulePrinter:
         daily_transfers = {}
         
         for transfer in transfers:
-            for item in transfer.order_items:
-                # Calculate germination (transfer) date
-                prod_date = transfer.production_date
-                germ_date = prod_date - timedelta(days=item.item.growth_days)
-                
-                if monday <= germ_date <= sunday:
-                    date_str = germ_date.strftime("%d.%m.%Y")
-                    if date_str not in daily_transfers:
-                        daily_transfers[date_str] = {}
+            try:
+                for item in transfer.order_items:
+                    # Calculate germination (transfer) date
+                    prod_date = transfer.production_date
+                    germ_date = prod_date - timedelta(days=item.item.growth_days)
                     
-                    if item.item.name not in daily_transfers[date_str]:
-                        daily_transfers[date_str][item.item.name] = 0
-                    
-                    daily_transfers[date_str][item.item.name] += item.amount
+                    if monday <= germ_date <= sunday:
+                        date_str = germ_date.strftime("%d.%m.%Y")
+                        if date_str not in daily_transfers:
+                            daily_transfers[date_str] = {}
+                        
+                        if item.item.name not in daily_transfers[date_str]:
+                            daily_transfers[date_str][item.item.name] = 0
+                        
+                        daily_transfers[date_str][item.item.name] += item.amount
+            except:
+                # Skip this transfer if we encounter errors (e.g., missing customer)
+                continue
         
         return daily_transfers
 
@@ -332,12 +353,18 @@ class SchedulePrinter:
             pdf.set_font('Arial', 'B', 12)
             pdf.cell(0, 10, f'Datum: {date_str}', 0, 1, 'L')
             data = []
-            for item_name, info in items.items():
+            
+            # Sort items alphabetically (case-insensitive)
+            sorted_item_names = sorted(items.keys(), key=str.lower)
+            
+            for item_name in sorted_item_names:
+                info = items[item_name]
                 data.append([
                     item_name,
                     f"{info['amount']}",
                     info['half_channel']
                 ])
+            
             self._add_table(pdf, ["Item", "Menge", "Halbe Channel"], data)
         
         # Transfer Schedule
@@ -348,7 +375,11 @@ class SchedulePrinter:
         for date_str, transfers in daily_transfers.items():
             pdf.set_font('Arial', 'B', 12)
             pdf.cell(0, 10, f'Transfer Datum: {date_str}', 0, 1, 'L')
-            data = [[item, f"{amount}"] for item, amount in transfers.items()]
+            
+            # Sort items alphabetically (case-insensitive)
+            sorted_item_names = sorted(transfers.keys(), key=str.lower)
+            data = [[item, f"{transfers[item]}"] for item in sorted_item_names]
+            
             self._add_table(pdf, ["Item", "Menge"], data)
         
         filename = f"all_schedules_{week_date.strftime('%Y%m%d')}.pdf"
