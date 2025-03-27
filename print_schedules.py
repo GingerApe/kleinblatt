@@ -5,6 +5,7 @@ from models import Order, OrderItem, Item, Customer
 from peewee import *
 import tkinter as tk
 from tkinter import messagebox
+from collections import defaultdict
 
 class SchedulePrinter:
     def __init__(self):
@@ -20,7 +21,7 @@ class SchedulePrinter:
         pdf.set_font('Arial', '', 12)
         monday = week_date - timedelta(days=week_date.weekday())
         sunday = monday + timedelta(days=6)
-        pdf.cell(0, 10, f'Week: {monday.strftime("%d.%m.%Y")} - {sunday.strftime("%d.%m.%Y")}', 0, 1, 'C')
+        pdf.cell(0, 10, f'Woche: {monday.strftime("%d.%m.%Y")} - {sunday.strftime("%d.%m.%Y")}', 0, 1, 'C')
         pdf.ln(5)
 
     def _add_weekly_plan_table(self, pdf, data_by_day, week_date):
@@ -35,14 +36,24 @@ class SchedulePrinter:
         day_width = available_width / 7
         subcol_width = day_width / 2
 
+        # German day names
+        german_days = {
+            0: "Montag",
+            1: "Dienstag",
+            2: "Mittwoch", 
+            3: "Donnerstag",
+            4: "Freitag",
+            5: "Samstag",
+            6: "Sonntag"
+        }
+
         # Header row: Day name and date (merged cell per day)
         pdf.set_font("Arial", "B", 12)
         header_height = 10
         monday = week_date - timedelta(days=week_date.weekday())
         for i in range(7):
             day_date = monday + timedelta(days=i)
-            # For a nicer look you might want to localize day names if needed.
-            day_text = f"{day_date.strftime('%A')} ({day_date.strftime('%d.%m')})"
+            day_text = f"{german_days[i]} ({day_date.strftime('%d.%m')})"
             pdf.cell(day_width, header_height, day_text, border=1, align="C")
         pdf.ln(header_height)
 
@@ -170,26 +181,37 @@ class SchedulePrinter:
         for delivery in deliveries:
             date_str = delivery.delivery_date.strftime("%d.%m.%Y")
             if date_str not in daily_data:
-                daily_data[date_str] = []
+                daily_data[date_str] = {}
             
-            items_info = []
+            customer_name = delivery.customer.name
+            if customer_name not in daily_data[date_str]:
+                daily_data[date_str][customer_name] = {
+                    'items': [],
+                    'halbe_channel': delivery.halbe_channel
+                }
+            
             for item in delivery.order_items:
                 # Format the amount: remove decimals if it's a whole number
                 amount_str = str(int(item.amount)) if item.amount == int(item.amount) else str(item.amount)
-                items_info.append(f"{item.item.name}: {amount_str}")
-            
-            half_channel_status = "Ja" if delivery.halbe_channel else "Nein"
-            formatted_items = ", ".join(items_info)
-            
-            daily_data[date_str].append([
-                delivery.customer.name,
-                formatted_items,
-                half_channel_status
-            ])
+                daily_data[date_str][customer_name]['items'].append(f"{item.item.name}: {amount_str}")
+        
+        # Format the data for display
+        formatted_data = {}
+        for date_str, customers in daily_data.items():
+            formatted_data[date_str] = []
+            for customer_name, info in customers.items():
+                half_channel_status = "Ja" if info['halbe_channel'] else "Nein"
+                formatted_items = ", ".join(info['items'])
+                
+                formatted_data[date_str].append([
+                    customer_name,
+                    formatted_items,
+                    half_channel_status
+                ])
         
         return {
             "headers": ["Kunde", "Items", "Halbe Channel"],
-            "daily_data": daily_data
+            "daily_data": formatted_data
         }
 
     def get_week_production_plan(self, week_date):
@@ -234,7 +256,7 @@ class SchedulePrinter:
         daily_transfers = {}
         
         for transfer in transfers:
-            for item in transfer.order_items:  # Fixed: was transfer.items
+            for item in transfer.order_items:
                 # Calculate germination (transfer) date
                 prod_date = transfer.production_date
                 germ_date = prod_date - timedelta(days=item.item.growth_days)
@@ -259,22 +281,22 @@ class SchedulePrinter:
         pdf.add_page('L')  # Landscape orientation
 
         if schedule_type == "delivery":
-            title = "Weekly Delivery Schedule"
+            title = "Wöchentlicher Lieferplan"
             schedule_data = self.get_week_delivery_schedule(week_date)
             self._create_header(pdf, title, week_date)
             for date_str, deliveries in schedule_data["daily_data"].items():
                 pdf.set_font('Arial', 'B', 12)
-                pdf.cell(0, 10, f'Date: {date_str}', 0, 1, 'L')
+                pdf.cell(0, 10, f'Datum: {date_str}', 0, 1, 'L')
                 self._add_table(pdf, schedule_data["headers"], deliveries)
 
         elif schedule_type == "production":
-            title = "Weekly Production Plan"
+            title = "Wöchentlicher Produktionsplan"
             daily_items = self.get_week_production_plan(week_date)
             self._create_header(pdf, title, week_date)
             self._add_weekly_plan_table(pdf, daily_items, week_date)
 
         else:  # transfer
-            title = "Weekly Transfer Schedule"
+            title = "Wöchentlicher Transferplan"
             daily_transfers = self.get_week_transfer_schedule(week_date)
             self._create_header(pdf, title, week_date)
             self._add_weekly_plan_table(pdf, daily_transfers, week_date)
@@ -293,40 +315,39 @@ class SchedulePrinter:
         
         # Delivery Schedule
         pdf.add_page('L')
-        title = "Weekly Delivery Schedule"
+        title = "Wöchentlicher Lieferplan"
         schedule_data = self.get_week_delivery_schedule(week_date)
         self._create_header(pdf, title, week_date)
         for date_str, deliveries in schedule_data["daily_data"].items():
             pdf.set_font('Arial', 'B', 12)
-            pdf.cell(0, 10, f'Date: {date_str}', 0, 1, 'L')
+            pdf.cell(0, 10, f'Datum: {date_str}', 0, 1, 'L')
             self._add_table(pdf, schedule_data["headers"], deliveries)
         
         # Production Plan
         pdf.add_page('L')
-        title = "Weekly Production Plan"
+        title = "Wöchentlicher Produktionsplan"
         daily_items = self.get_week_production_plan(week_date)
         self._create_header(pdf, title, week_date)
         for date_str, items in daily_items.items():
             pdf.set_font('Arial', 'B', 12)
-            pdf.cell(0, 10, f'Date: {date_str}', 0, 1, 'L')
+            pdf.cell(0, 10, f'Datum: {date_str}', 0, 1, 'L')
             data = []
             for item_name, info in items.items():
                 data.append([
                     item_name,
-                    f"{info['amount']}",  # Removed 'g' suffix
+                    f"{info['amount']}",
                     info['half_channel']
                 ])
             self._add_table(pdf, ["Item", "Menge", "Halbe Channel"], data)
         
         # Transfer Schedule
         pdf.add_page('L')
-        title = "Weekly Transfer Schedule"
+        title = "Wöchentlicher Transferplan"
         daily_transfers = self.get_week_transfer_schedule(week_date)
         self._create_header(pdf, title, week_date)
         for date_str, transfers in daily_transfers.items():
             pdf.set_font('Arial', 'B', 12)
-            pdf.cell(0, 10, f'Transfer Date: {date_str}', 0, 1, 'L')
-            # Remove the 'g' suffix
+            pdf.cell(0, 10, f'Transfer Datum: {date_str}', 0, 1, 'L')
             data = [[item, f"{amount}"] for item, amount in transfers.items()]
             self._add_table(pdf, ["Item", "Menge"], data)
         
@@ -338,7 +359,7 @@ class SchedulePrinter:
 def ask_week_selection():
     """Ask user which week to print"""
     dialog = tk.Toplevel()
-    dialog.title("Select Week")
+    dialog.title("Woche auswählen")
     dialog.geometry("300x150")
     
     result = {"week": None}
@@ -351,10 +372,10 @@ def ask_week_selection():
         result["week"] = "next"
         dialog.destroy()
     
-    tk.Label(dialog, text="Which week would you like to print?").pack(pady=10)
+    tk.Label(dialog, text="Welche Woche möchten Sie drucken?").pack(pady=10)
     
-    tk.Button(dialog, text="Current Week", command=set_current, fg="black", bg="white", highlightbackground="white").pack(pady=5)
-    tk.Button(dialog, text="Next Week", command=set_next, fg="black", bg="white", highlightbackground="white").pack(pady=5)
+    tk.Button(dialog, text="Aktuelle Woche", command=set_current, fg="black", bg="white", highlightbackground="white").pack(pady=5)
+    tk.Button(dialog, text="Nächste Woche", command=set_next, fg="black", bg="white", highlightbackground="white").pack(pady=5)
     
     dialog.transient()
     dialog.grab_set()

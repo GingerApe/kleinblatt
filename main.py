@@ -12,6 +12,23 @@ from widgets import AutocompleteCombobox
 from print_schedules import SchedulePrinter, ask_week_selection
 import os
 
+# Check for updates
+VERSION = "0.9"
+def check_for_updates():
+    try:
+        # Replace with your actual repo URL
+        response = requests.get("https://github.com/GingerApe/kleinblatt.git")
+        latest_version = response.json()["tag_name"]
+        
+        if latest_version > VERSION:
+            print(f"New version {latest_version} available!")
+            print("Please download the latest version from: ")
+            print("https://github.com/GingerApe/kleinblatt.git")
+            return True
+    except:
+        pass
+    return False
+
 # Function to check for production orders on Sundays
 def check_sunday_production():
     """
@@ -97,11 +114,16 @@ class ProductionApp(tk.Tk):
         self.item_view = ItemView(self.tab6)
     
     def load_customers(self):
+        # Clear existing data
+        for item in self.customer_tree.get_children():
+            self.customer_tree.delete(item)
+            
         # Fetch customers sorted by order count with total price calculation
         customers = (Customer
                     .select(Customer, 
                             fn.COUNT(Order.id).alias('order_count'),
-                            fn.SUM(OrderItem.amount * Item.price).alias('total_price'))
+                            fn.SUM(OrderItem.amount * Item.price).alias('total_price'),
+                            fn.MAX(Order.delivery_date).alias('last_order_date'))
                     .join(Order, JOIN.LEFT_OUTER)
                     .join(OrderItem, JOIN.LEFT_OUTER)
                     .join(Item, JOIN.LEFT_OUTER)
@@ -109,11 +131,42 @@ class ProductionApp(tk.Tk):
                     .group_by(Customer)
                     .order_by(fn.COUNT(Order.id).desc()))
         
+        total_customers = 0
+        total_revenue = 0.0
+        total_orders = 0
+        
         for customer in customers:
             # Format the total price as currency or show €0.00 if None
-            total_price = f"€{customer.total_price:.2f}" if customer.total_price else "€0,00"
-            self.customer_tree.insert('', 'end', values=(customer.name, customer.order_count, total_price.replace('.',',')))
+            total_price = customer.total_price or 0
+            formatted_price = f"€{total_price:.2f}".replace('.',',')
             
+            # Calculate average order value
+            avg_value = total_price / customer.order_count if customer.order_count > 0 and total_price else 0
+            formatted_avg = f"€{avg_value:.2f}".replace('.',',')
+            
+            # Format last order date
+            last_order = customer.last_order_date.strftime('%d.%m.%Y') if customer.last_order_date else "-"
+            
+            self.customer_tree.insert('', 'end', values=(
+                customer.name, 
+                customer.order_count, 
+                formatted_price,
+                formatted_avg,
+                last_order
+            ))
+            
+            # Update totals
+            total_customers += 1
+            total_revenue += total_price
+            total_orders += customer.order_count
+        
+        # Update summary variables
+        self.total_customers_var.set(f"Anzahl Kunden: {total_customers}")
+        self.total_revenue_var.set(f"Gesamtumsatz: €{total_revenue:.2f}".replace('.',','))
+        
+        avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
+        self.avg_order_value_var.set(f"Durchschn. Bestellwert: €{avg_order_value:.2f}".replace('.',','))
+    
     # Modify refresh_tables method to include items
     def refresh_tables(self):
         """Refresh all weekly views"""
@@ -148,30 +201,6 @@ class ProductionApp(tk.Tk):
             self.order_tree.delete(item)
         
         # Fetch and display orders for the selected customer
-        today = datetime.now().date()
-        orders = (Order
-                .select()
-                .where(
-                    (Order.customer == customer) &
-                    (Order.delivery_date <= today)
-                    )
-                .group_by(Order.subscription_type, Order.from_date, Order.to_date))
-        
-        for order in orders:
-            items_summary = ', '.join(f"{oi.item.name} ({oi.amount})" for oi in order.order_items)
-            self.order_tree.insert('', 'end', values=(order.from_date, order.to_date, items_summary))
-            selected_item = self.customer_tree.selection()
-        if not selected_item:
-            return
-        
-        customer_name = self.customer_tree.item(selected_item, 'values')[0]
-        customer = self.customers[customer_name]
-        
-        # Clear previous orders
-        for item in self.order_tree.get_children():
-            self.order_tree.delete(item)
-        
-        # Fetch and display orders for the selected customer
         orders = (Order
                 .select()
                 .where(Order.customer == customer)
@@ -179,8 +208,12 @@ class ProductionApp(tk.Tk):
         
         for order in orders:
             items_summary = ', '.join(f"{oi.item.name} ({oi.amount})" for oi in order.order_items)
-            self.order_tree.insert('', 'end', values=(order.from_date, order.to_date, items_summary))
             
+            # Handle single orders specially
+            from_date = "Einmalige Bestellung" if order.subscription_type == 0 else order.from_date
+            to_date = "" if order.subscription_type == 0 else order.to_date
+            
+            self.order_tree.insert('', 'end', values=(from_date, to_date, items_summary))
             
     def edit_order(self):
         selected_item = self.order_tree.selection()
@@ -621,11 +654,40 @@ class ProductionApp(tk.Tk):
         customer_frame.pack(fill='both', expand=True, padx=10, pady=5)
         
         # Treeview for customer list
-        self.customer_tree = ttk.Treeview(customer_frame, columns=('Name', 'Anzahl Bestellungen', 'Umsatz'), show='headings')
+        self.customer_tree = ttk.Treeview(customer_frame, columns=('Name', 'Anzahl Bestellungen', 'Umsatz', 'Durchschn. Wert', 'Letzte Bestellung'), show='headings')
         self.customer_tree.heading('Name', text='Name')
         self.customer_tree.heading('Anzahl Bestellungen', text='Anzahl Bestellungen')
         self.customer_tree.heading('Umsatz', text='Umsatz')
-        self.customer_tree.pack(fill='both', expand=True, padx=5, pady=5)
+        self.customer_tree.heading('Durchschn. Wert', text='Durchschn. Wert')
+        self.customer_tree.heading('Letzte Bestellung', text='Letzte Bestellung')
+        
+        # Set column widths
+        self.customer_tree.column('Name', width=200)
+        self.customer_tree.column('Anzahl Bestellungen', width=150)
+        self.customer_tree.column('Umsatz', width=100)
+        self.customer_tree.column('Durchschn. Wert', width=120)
+        self.customer_tree.column('Letzte Bestellung', width=120)
+        
+        # Add vertical scrollbar
+        customer_scrollbar = ttk.Scrollbar(customer_frame, orient="vertical", command=self.customer_tree.yview)
+        self.customer_tree.configure(yscrollcommand=customer_scrollbar.set)
+        
+        # Pack tree and scrollbar
+        self.customer_tree.pack(side="left", fill='both', expand=True, padx=5, pady=5)
+        customer_scrollbar.pack(side="right", fill="y")
+        
+        # Summary frame - shows overall statistics
+        summary_frame = ttk.LabelFrame(customer_frame, text="Zusammenfassung")
+        summary_frame.pack(fill='x', padx=5, pady=5, anchor='s')
+        
+        # Total metrics display
+        self.total_customers_var = tk.StringVar(value="Anzahl Kunden: 0")
+        self.total_revenue_var = tk.StringVar(value="Gesamtumsatz: €0,00")
+        self.avg_order_value_var = tk.StringVar(value="Durchschn. Bestellwert: €0,00")
+        
+        ttk.Label(summary_frame, textvariable=self.total_customers_var, font=("", 10, "bold")).pack(side='left', padx=20, pady=5)
+        ttk.Label(summary_frame, textvariable=self.total_revenue_var, font=("", 10, "bold")).pack(side='left', padx=20, pady=5)
+        ttk.Label(summary_frame, textvariable=self.avg_order_value_var, font=("", 10, "bold")).pack(side='left', padx=20, pady=5)
         
         # Bind selection event
         self.customer_tree.bind('<<TreeviewSelect>>', self.on_customer_select)
@@ -641,8 +703,15 @@ class ProductionApp(tk.Tk):
         self.order_tree.heading('Items', text='Items')
         self.order_tree.pack(fill='both', expand=True, padx=5, pady=5)
         
+        # Button frame
+        button_frame = ttk.Frame(order_frame)
+        button_frame.pack(fill='x', pady=5)
+        
         # Button to edit selected order
-        ttk.Button(order_frame, text="Edit Order", command=self.edit_order).pack(pady=5)
+        ttk.Button(button_frame, text="Edit Order", command=self.edit_order).pack(side='left', padx=5)
+        
+        # Refresh button
+        ttk.Button(button_frame, text="Refresh Data", command=self.load_customers).pack(side='right', padx=5)
         
         self.load_customers()
 
@@ -928,21 +997,6 @@ class ProductionApp(tk.Tk):
         except Exception as e:
             messagebox.showwarning("Warning", f"PDF was created but couldn't be opened automatically: {filepath}")
 
-VERSION = "0.9"
-def check_for_updates():
-    try:
-        # Replace with your actual repo URL
-        response = requests.get("https://api.github.com/repos/yourusername/yourrepo/releases/latest")
-        latest_version = response.json()["tag_name"]
-        
-        if latest_version > VERSION:
-            print(f"New version {latest_version} available!")
-            print("Please download the latest version from: ")
-            print("https://github.com/yourusername/yourrepo/releases/latest")
-            return True
-    except:
-        pass
-    return False
 if __name__ == "__main__":
     check_for_updates()
     app = ProductionApp()
