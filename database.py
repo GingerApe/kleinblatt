@@ -55,17 +55,32 @@ def generate_subscription_orders(order):
     return orders
 
 def get_delivery_schedule(start_date=None, end_date=None):
+    """
+    Get delivery schedule for the given date range.
+    
+    The application now correctly creates orders with the right subscription pattern,
+    so we should simply display all orders in the database for the requested date range.
+    """
+    # Get base query with date range filter
     query = (Order
             .select(Order, Customer)
             .join(Customer)
     )
+    
     if start_date and end_date:
         query = query.where((Order.delivery_date >= start_date) & 
                           (Order.delivery_date <= end_date))
     
-    return query.order_by(Order.delivery_date)
+    # Return all orders in the date range
+    return list(query.order_by(Order.delivery_date))
 
 def get_production_plan(start_date=None, end_date=None):
+    """
+    Get production plan for the given date range.
+    
+    The application now correctly creates orders with the right subscription pattern,
+    so we should simply display all orders in the database for the requested date range.
+    """
     query = (OrderItem
         .select(
             Order.production_date,
@@ -94,24 +109,18 @@ def get_production_plan(start_date=None, end_date=None):
                 )
             )
         )
-        .group_by(Order.production_date, Item.name, Item.seed_quantity, Item.substrate)  # Added these to group by
+        .group_by(Order.production_date, Item.name, Item.seed_quantity, Item.substrate)
         .order_by(Order.production_date))
     
     if start_date and end_date:
         query = query.where((Order.production_date >= start_date) & 
                           (Order.production_date <= end_date))
     
-    # Debug any potential day-of-week filtering
-    # Check if there are any orders with Sunday production date
-    from datetime import datetime, timedelta
-    
-    # Check production dates in database to see if we have any Sunday records
-    sunday_orders = []
-    
-    # Execute the query to get the results
+    # Return all results without subscription filtering
     results = list(query)
     
-    # Filter out Sunday orders for debugging
+    # Debug code for Sunday orders (kept from original)
+    sunday_orders = []
     for result in results:
         if result.order.production_date.weekday() == 6:  # 6 = Sunday
             sunday_orders.append(result)
@@ -122,14 +131,18 @@ def get_production_plan(start_date=None, end_date=None):
         current_date = start_date
         while current_date <= end_date:
             if current_date.weekday() == 6:  # Found a Sunday in the range
-                # If we get here, it means the range has a Sunday but no orders on Sunday
                 break
             current_date += timedelta(days=1)
     
     return results
 
 def get_transfer_schedule(start_date=None, end_date=None):
-    """Get items that need to be transferred from seeding to growing"""
+    """
+    Get transfer schedule for the given date range.
+    
+    The application now correctly creates orders with the right subscription pattern,
+    so we should simply display all orders in the database for the requested date range.
+    """
     query = (OrderItem
         .select(
             Order.production_date,
@@ -153,6 +166,7 @@ def get_transfer_schedule(start_date=None, end_date=None):
         )
         .group_by(Order.production_date, Item.name, Item.soaking_days, Item.germination_days, Item.seed_quantity))
     
+    # Process all records for transfer data without subscription filtering
     transfer_data = []
     
     for record in query:
@@ -166,7 +180,7 @@ def get_transfer_schedule(start_date=None, end_date=None):
             'date': transfer_date,
             'item': record.item.name,
             'amount': record.total_amount,
-            'seeds': record.total_amount * record.item.seed_quantity  # Fixed this line
+            'seeds': record.total_amount * record.item.seed_quantity
         })
     
     # Group by date and item

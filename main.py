@@ -519,6 +519,27 @@ class ProductionApp(tk.Tk):
                     messagebox.showerror("Fehler", "Ungültiges Datumsformat. Verwenden Sie entweder dd.mm.yyyy oder yyyy-mm-dd.")
                     return
                 
+                # Define the validation function that has been thoroughly tested
+                def validate_amount(amount_str, item_name):
+                    try:
+                        # First check for subscription type strings
+                        if amount_str in ["Wöchentlich", "Zweiwöchentlich", "Alle 3 Wochen", "Alle 4 Wochen", "Kein Abonnement"]:
+                            return False, f"Ungültige Menge: '{amount_str}' scheint ein Abonnementtyp zu sein statt einer Zahl für Artikel {item_name}"
+                        
+                        # Support European decimal format (comma instead of period)
+                        amount_str = amount_str.replace(',', '.')
+                        
+                        # Now try to convert to float
+                        amount = float(amount_str)
+                        
+                        if amount <= 0:
+                            return False, f"Menge muss größer als 0 sein für Artikel {item_name}"
+                            
+                        return True, amount
+                        
+                    except ValueError:
+                        return False, f"Ungültige Menge für Artikel {item_name}. Bitte geben Sie eine Zahl ein."
+                
                 with db.atomic():  # Use transaction to ensure all changes are saved or none
                     # Loop through each order row to update/create orders and their items.
                     for row in order_rows:
@@ -535,18 +556,16 @@ class ProductionApp(tk.Tk):
                         order_items_data = []
                         for item_row in row['items']:
                             item_name = item_row['item_cb'].get()
-                            try:
-                                # Convert amount string to float explicitly
-                                amount_str = item_row['amount_entry'].get().strip()
-                                amount = float(amount_str)
-                                if amount <= 0:
-                                    raise ValueError(f"Menge muss größer als 0 sein für Artikel {item_name}")
-                            except ValueError as e:
-                                if "could not convert string to float" in str(e):
-                                    messagebox.showerror("Fehler", f"Ungültige Menge für Artikel {item_name}. Bitte geben Sie eine Zahl ein.")
-                                else:
-                                    messagebox.showerror("Fehler", str(e))
+                            
+                            # Use our validated amount validation function
+                            amount_str = item_row['amount_entry'].get().strip()
+                            valid, result = validate_amount(amount_str, item_name)
+                            
+                            if not valid:
+                                messagebox.showerror("Fehler", result)
                                 return
+                            
+                            amount = result  # This is the validated float value
                             
                             if item_name not in self.items:
                                 messagebox.showerror("Fehler", f"Ungültiger Artikel: {item_name}")

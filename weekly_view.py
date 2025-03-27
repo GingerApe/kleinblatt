@@ -570,7 +570,14 @@ class WeeklyDeliveryView(WeeklyBaseView):
         ttk.Label(date_frame, text="Lieferdatum:").pack(side='left', padx=5)
         delivery_date_entry = ttk.Entry(date_frame, width=12)
         delivery_date_entry.pack(side='left', padx=5)
-        delivery_date_entry.insert(0, delivery_date.strftime('%d.%m.%Y'))
+        
+        # Use the order's actual delivery date if editing an existing order
+        if order:
+            # Use the order's actual delivery date for existing orders
+            delivery_date_entry.insert(0, order.delivery_date.strftime('%d.%m.%Y'))
+        else:
+            # Use the passed date parameter for new orders
+            delivery_date_entry.insert(0, delivery_date.strftime('%d.%m.%Y'))
         
         # --- Customer Selection (only for new orders) ---
         customer_cb = None
@@ -604,9 +611,29 @@ class WeeklyDeliveryView(WeeklyBaseView):
         }
         
         # Create dropdown for subscription type instead of radio buttons
-        sub_combo = ttk.Combobox(sub_type_frame, textvariable=sub_var, width=15, state="readonly")
-        sub_combo['values'] = [f"{v}" for k, v in sub_types.items()]
-        sub_combo.current(sub_var.get())  # Set to current value
+        sub_combo = ttk.Combobox(sub_type_frame, width=15, state="readonly")
+        
+        # Store the keys and values separately for easier lookup
+        sub_keys = list(sub_types.keys())
+        sub_values = list(sub_types.values())
+        
+        # Set the display values to just show the text descriptions
+        sub_combo['values'] = sub_values
+        
+        # Set initial selection based on the order's subscription_type
+        sub_combo.current(sub_var.get())
+        
+        # Define a function to update the sub_var when the combobox selection changes
+        def on_sub_combo_change(event):
+            # Get the current selection index
+            selected_index = sub_combo.current()
+            if selected_index >= 0:
+                # Look up the corresponding key (0-4) and set it in the IntVar
+                sub_var.set(sub_keys[selected_index])
+        
+        # Bind the function to the combobox selection event
+        sub_combo.bind("<<ComboboxSelected>>", on_sub_combo_change)
+        
         sub_combo.pack(side='left', padx=5)
         
         # Create frame for date range
@@ -696,7 +723,7 @@ class WeeklyDeliveryView(WeeklyBaseView):
         update_frame = ttk.LabelFrame(edit_window, text="Update Scope")
         update_frame.pack(fill='x', padx=10, pady=5)
         
-        update_type = tk.StringVar(value="current")
+        update_type = tk.StringVar(value="future")  # Changed default from "current" to "future"
         
         ttk.Radiobutton(
             update_frame, 
@@ -710,13 +737,6 @@ class WeeklyDeliveryView(WeeklyBaseView):
             text="Update this and all future orders in this subscription", 
             variable=update_type, 
             value="future"
-        ).pack(anchor='w', padx=5, pady=2)
-        
-        ttk.Radiobutton(
-            update_frame, 
-            text="Create a new subscription with these settings", 
-            variable=update_type, 
-            value="new"
         ).pack(anchor='w', padx=5, pady=2)
         
         # --- Save Changes Button ---
@@ -752,21 +772,46 @@ class WeeklyDeliveryView(WeeklyBaseView):
                 order_items_data = []
                 for row in item_rows:
                     item_name = row['item_cb'].get()
-                    try:
-                        amount = float(row['amount_entry'].get())
-                    except ValueError:
-                        messagebox.showerror("Fehler", f"Ungültige Menge für Artikel {item_name}")
+                    
+                    # Get the amount string and validate before conversion
+                    amount_str = row['amount_entry'].get().strip()
+                    
+                    # Check for subscription type strings
+                    if amount_str in ["Wöchentlich", "Zweiwöchentlich", "Alle 3 Wochen", "Alle 4 Wochen", "Kein Abonnement"]:
+                        messagebox.showerror("Fehler", 
+                            f"Ungültige Menge: '{amount_str}' scheint ein Abonnementtyp zu sein statt einer Zahl für Artikel {item_name}")
                         return
+                    
+                    # Support European decimal format (comma instead of period)
+                    amount_str = amount_str.replace(',', '.')
+                    
+                    # Try to convert to float
+                    try:
+                        amount = float(amount_str)
+                        if amount <= 0:
+                            messagebox.showerror("Fehler", f"Menge muss größer als 0 sein für Artikel {item_name}")
+                            return
+                    except ValueError:
+                        messagebox.showerror("Fehler", f"Ungültige Menge für Artikel {item_name}. Bitte geben Sie eine Zahl ein.")
+                        return
+                    
                     if item_name not in self.app.items:
                         messagebox.showerror("Fehler", f"Ungültiger Artikel: {item_name}")
                         return
+                    
                     order_items_data.append((item_name, amount))
                 
                 with self.db.atomic():  # Transaction to ensure all operations succeed or fail together
                     if update_type.get() == "current":
                         # Only update the current order
                         if order_obj:  # Editing existing order
+                            # Calculate new production date based on updated items
+                            max_days = max(self.app.items[item_name].total_days for item_name, _ in order_items_data)
+                            production_date = new_date - timedelta(days=max_days)
+                            
+                            # Update existing order (don't delete it)
                             order_obj.delivery_date = new_date
+                            order_obj.production_date = production_date
                             order_obj.subscription_type = sub_var.get()
                             order_obj.from_date = from_date
                             order_obj.to_date = to_date
@@ -777,7 +822,7 @@ class WeeklyDeliveryView(WeeklyBaseView):
                             for oi in order_obj.order_items:
                                 oi.delete_instance()
                             
-                            # Create new items
+                            # Create new items for this order
                             for item_name, amount in order_items_data:
                                 OrderItem.create(
                                     order=order_obj,
@@ -822,95 +867,100 @@ class WeeklyDeliveryView(WeeklyBaseView):
                             messagebox.showerror("Fehler", "Kann zukünftige Bestellungen für eine neue Bestellung nicht aktualisieren")
                             return
                         
-                        # Find all subscription orders that are part of this subscription and in the future
-                        today = datetime.now().date()
-                        future_orders = list(Order.select().where(
-                            (Order.from_date == order_obj.from_date) &
-                            (Order.to_date == order_obj.to_date) &
-                            (Order.delivery_date >= today)
+                        # Store important values from existing order
+                        customer = order_obj.customer
+                        current_date = order_obj.delivery_date
+                        from_date_old = order_obj.from_date
+                        to_date_old = order_obj.to_date
+                        
+                        # First, update all existing orders in this subscription without deleting them
+                        existing_future_orders = list(Order.select().where(
+                            (Order.from_date == from_date_old) &
+                            (Order.to_date == to_date_old) &
+                            (Order.delivery_date >= current_date)  # Including current order and future ones
                         ))
                         
-                        # Update this order and all future orders
-                        for future_order in future_orders:
-                            # Only update the order if it's this order or it's in the future
-                            if future_order.id == order_obj.id or future_order.delivery_date >= today:
-                                # Update subscription properties
-                                future_order.subscription_type = sub_var.get()
-                                future_order.from_date = from_date
-                                future_order.to_date = to_date
-                                future_order.halbe_channel = halbe_var.get()
-                                future_order.save()
-                                
-                                # Only update items for this specific order
-                                if future_order.id == order_obj.id:
-                                    # Delete existing items
-                                    for oi in future_order.order_items:
-                                        oi.delete_instance()
-                                    
-                                    # Create new items 
-                                    for item_name, amount in order_items_data:
-                                        OrderItem.create(
-                                            order=future_order,
-                                            item=self.app.items[item_name],
-                                            amount=amount
-                                        )
+                        # Create a map of delivery dates to existing orders
+                        existing_order_map = {order.delivery_date: order for order in existing_future_orders}
                         
-                    elif update_type.get() == "new":
-                        # Create a new subscription based on these settings
-                        if not order_obj:
-                            # Need customer for new order
-                            if customer_cb is None:
-                                messagebox.showerror("Fehler", "Kundenauswahl ist erforderlich")
-                                return
-                            customer_name = customer_cb.get()
-                            if customer_name not in self.app.customers:
-                                messagebox.showerror("Fehler", "Ungültiger Kunde")
-                                return
-                            customer = self.app.customers[customer_name]
-                        else:
-                            # Use customer from existing order
-                            customer = order_obj.customer
-                        
-                        # Calculate production date
+                        # Calculate common values needed for all orders
                         max_days = max(self.app.items[item_name].total_days for item_name, _ in order_items_data)
-                        production_date = new_date - timedelta(days=max_days)
                         
-                        # Create the first order of the new subscription
-                        new_order = Order.create(
-                            customer=customer,
-                            delivery_date=new_date,
-                            production_date=production_date,
-                            from_date=from_date,
-                            to_date=to_date,
-                            subscription_type=sub_var.get(),
-                            halbe_channel=halbe_var.get(),
-                            order_id=uuid.uuid4(),
-                            is_future=False if new_date <= datetime.now().date() else True
-                        )
+                        # Update the current order first - only change the edited order's date
+                        order_obj.delivery_date = new_date  # Update date for current order
+                        order_obj.production_date = new_date - timedelta(days=max_days)
+                        order_obj.subscription_type = sub_var.get()
+                        order_obj.from_date = from_date
+                        order_obj.to_date = to_date
+                        order_obj.halbe_channel = halbe_var.get()
+                        order_obj.save()
                         
-                        # Create order items
+                        # Delete and recreate items for current order
+                        for oi in order_obj.order_items:
+                            oi.delete_instance()
+                        
                         for item_name, amount in order_items_data:
                             OrderItem.create(
-                                order=new_order,
+                                order=order_obj,
                                 item=self.app.items[item_name],
                                 amount=amount
                             )
                         
-                        # Generate future subscription orders if applicable
+                        # Handle future orders based on subscription settings
                         if sub_var.get() > 0:
-                            future_orders = generate_subscription_orders(new_order)
-                            for future_order_data in future_orders:
-                                future_order = Order.create(
-                                    **future_order_data,
-                                    order_id=uuid.uuid4()
-                                )
-                                # Copy items to future order
-                                for item_name, amount in order_items_data:
-                                    OrderItem.create(
-                                        order=future_order,
-                                        item=self.app.items[item_name],
-                                        amount=amount
+                            # Calendar-style approach: Delete ALL future orders except the current one,
+                            # then create a completely new pattern
+                            
+                            # First, delete all existing future orders except the current one
+                            for existing_order in existing_future_orders:
+                                # Skip the current order as we've already updated it
+                                if existing_order.id == order_obj.id:
+                                    continue
+                                
+                                # Delete the order and its items
+                                existing_order.delete_instance(recursive=True)
+                            
+                            # The interval for the new subscription pattern
+                            interval = {
+                                1: 7,     # Weekly
+                                2: 14,    # Biweekly
+                                3: 21,    # Every 3 weeks
+                                4: 28     # Every 4 weeks
+                            }.get(sub_var.get(), 7)
+                            
+                            # Generate and create all new orders in the pattern
+                            next_date = new_date + timedelta(days=interval)  # Start from the current order + interval
+                            
+                            # Create new orders for all future dates in the pattern
+                            while next_date <= to_date:
+                                # Only create future orders
+                                if next_date > datetime.now().date():
+                                    # Calculate production date
+                                    production_date = next_date - timedelta(days=max_days)
+                                    
+                                    # Create a new order
+                                    new_order = Order.create(
+                                        customer=customer,
+                                        delivery_date=next_date,
+                                        production_date=production_date,
+                                        from_date=from_date,
+                                        to_date=to_date,
+                                        subscription_type=sub_var.get(),
+                                        halbe_channel=halbe_var.get(),
+                                        order_id=uuid.uuid4(),
+                                        is_future=True
                                     )
+                                    
+                                    # Create items for the new order
+                                    for item_name, amount in order_items_data:
+                                        OrderItem.create(
+                                            order=new_order,
+                                            item=self.app.items[item_name],
+                                            amount=amount
+                                        )
+                                
+                                # Move to next date in pattern
+                                next_date += timedelta(days=interval)
                 
                 messagebox.showinfo("Erfolg", "Bestellung erfolgreich gespeichert!")
                 edit_window.destroy()
@@ -934,9 +984,41 @@ class WeeklyDeliveryView(WeeklyBaseView):
         # --- Delete Order Button ---
         if order:
             def delete_order():
-                if messagebox.askyesno("Bestellung löschen", "Sind Sie sicher, dass Sie diese Bestellung löschen möchten?"):
-                    order.delete_instance(recursive=True)  # Deletes the order and its related items
-                    messagebox.showinfo("Erfolg", "Bestellung erfolgreich gelöscht!")
+                scope = update_type.get()  # Get the current selected scope
+                
+                # Different confirmation message based on scope
+                if scope == "current":
+                    confirm_msg = "Sind Sie sicher, dass Sie diese einzelne Bestellung löschen möchten?"
+                else:  # scope == "future"
+                    confirm_msg = "Sind Sie sicher, dass Sie diese Bestellung und alle zukünftigen Bestellungen in diesem Abonnement löschen möchten?"
+                
+                if messagebox.askyesno("Bestellung löschen", confirm_msg):
+                    with self.db.atomic():  # Use transaction to ensure all operations succeed or fail together
+                        if scope == "current":
+                            # Delete only this order
+                            order.delete_instance(recursive=True)  # Deletes the order and its related items
+                            messagebox.showinfo("Erfolg", "Bestellung erfolgreich gelöscht!")
+                        else:  # scope == "future"
+                            # Delete this order and all future orders in the subscription
+                            from_date = order.from_date
+                            to_date = order.to_date
+                            current_date = order.delivery_date
+                            
+                            # Find all future orders (including current one)
+                            future_orders = list(Order.select().where(
+                                (Order.from_date == from_date) &
+                                (Order.to_date == to_date) &
+                                (Order.delivery_date >= current_date)
+                            ))
+                            
+                            # Delete all selected orders
+                            deleted_count = 0
+                            for future_order in future_orders:
+                                future_order.delete_instance(recursive=True)
+                                deleted_count += 1
+                                
+                            messagebox.showinfo("Erfolg", f"{deleted_count} Bestellung(en) erfolgreich gelöscht!")
+                    
                     edit_window.destroy()
                     self.refresh()
 
