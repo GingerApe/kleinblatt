@@ -14,7 +14,7 @@ class ItemView:
 
     def create_widgets(self):
         # Input frame
-        input_frame = ttk.LabelFrame(self.parent, text="Item Details")
+        input_frame = ttk.LabelFrame(self.parent, text="Artikeldetails")
         input_frame.pack(fill='x', padx=10, pady=5)
 
         # Grid layout for item details
@@ -24,30 +24,30 @@ class ItemView:
         self.name_entry.grid(row=0, column=1, padx=5, pady=5)
 
         # Seed quantity
-        ttk.Label(input_frame, text="Seed Quantity (g):").grid(row=1, column=0, padx=5, pady=5)
+        ttk.Label(input_frame, text="Saatgutmenge (g):").grid(row=1, column=0, padx=5, pady=5)
         self.seed_qty_entry = ttk.Entry(input_frame)
         self.seed_qty_entry.grid(row=1, column=1, padx=5, pady=5)
 
         # Days inputs
-        ttk.Label(input_frame, text="Soaking Days:").grid(row=2, column=0, padx=5, pady=5)
+        ttk.Label(input_frame, text="Einweichtage:").grid(row=2, column=0, padx=5, pady=5)
         self.soaking_days_entry = ttk.Entry(input_frame)
         self.soaking_days_entry.grid(row=2, column=1, padx=5, pady=5)
 
-        ttk.Label(input_frame, text="Germination Days:").grid(row=3, column=0, padx=5, pady=5)
+        ttk.Label(input_frame, text="Keimungstage:").grid(row=3, column=0, padx=5, pady=5)
         self.germination_days_entry = ttk.Entry(input_frame)
         self.germination_days_entry.grid(row=3, column=1, padx=5, pady=5)
 
-        ttk.Label(input_frame, text="Growth Days:").grid(row=4, column=0, padx=5, pady=5)
+        ttk.Label(input_frame, text="Wachstumstage:").grid(row=4, column=0, padx=5, pady=5)
         self.growth_days_entry = ttk.Entry(input_frame)
         self.growth_days_entry.grid(row=4, column=1, padx=5, pady=5)
 
         # Price
-        ttk.Label(input_frame, text="Price:").grid(row=5, column=0, padx=5, pady=5)
+        ttk.Label(input_frame, text="Preis:").grid(row=5, column=0, padx=5, pady=5)
         self.price_entry = ttk.Entry(input_frame)
         self.price_entry.grid(row=5, column=1, padx=5, pady=5)
 
         # Substrate
-        ttk.Label(input_frame, text="Substrate:").grid(row=6, column=0, padx=5, pady=5)
+        ttk.Label(input_frame, text="Substrat:").grid(row=6, column=0, padx=5, pady=5)
         self.substrate_entry = ttk.Entry(input_frame)
         self.substrate_entry.grid(row=6, column=1, padx=5, pady=5)
 
@@ -55,41 +55,41 @@ class ItemView:
         btn_frame = ttk.Frame(input_frame)
         btn_frame.grid(row=7, column=0, columnspan=2, pady=10)
 
-        self.save_btn = ttk.Button(btn_frame, text="Save", command=self.save_item)
+        self.save_btn = ttk.Button(btn_frame, text="Speichern", command=self.save_item)
         self.save_btn.pack(side='left', padx=5)
 
-        self.cancel_btn = ttk.Button(btn_frame, text="Cancel", command=self.cancel_edit)
+        self.cancel_btn = ttk.Button(btn_frame, text="Abbrechen", command=self.cancel_edit)
         self.cancel_btn.pack(side='left', padx=5)
         self.cancel_btn.pack_forget()  # Hidden by default
 
         # Item list
-        list_frame = ttk.LabelFrame(self.parent, text="Item List")
+        list_frame = ttk.LabelFrame(self.parent, text="Artikelliste")
         list_frame.pack(fill='both', expand=True, padx=10, pady=5)
 
         # Treeview for item list
         self.tree = ttk.Treeview(list_frame, columns=(
-            'ID', 'Name', 'Seed Qty', 'Soaking', 'Germination', 
-            'Growth', 'Price', 'Substrate'), show='headings')
+            'ID', 'Name', 'Saatgutmenge', 'Einweichen', 'Keimung', 
+            'Wachstum', 'Preis', 'Substrat'), show='headings')
         
         # Configure column headings
         self.tree.heading('ID', text='ID')
         self.tree.heading('Name', text='Name')
-        self.tree.heading('Seed Qty', text='Seed Qty (g)')
-        self.tree.heading('Soaking', text='Soaking Days')
-        self.tree.heading('Germination', text='Germination Days')
-        self.tree.heading('Growth', text='Growth Days')
-        self.tree.heading('Price', text='Price')
-        self.tree.heading('Substrate', text='Substrate')
+        self.tree.heading('Saatgutmenge', text='Saatgutmenge (g)')
+        self.tree.heading('Einweichen', text='Einweichtage')
+        self.tree.heading('Keimung', text='Keimungstage')
+        self.tree.heading('Wachstum', text='Wachstumstage')
+        self.tree.heading('Preis', text='Preis')
+        self.tree.heading('Substrat', text='Substrat')
 
         # Configure column widths
         self.tree.column('ID', width=50)
         self.tree.column('Name', width=150)
-        self.tree.column('Seed Qty', width=100)
-        self.tree.column('Soaking', width=100)
-        self.tree.column('Germination', width=100)
-        self.tree.column('Growth', width=100)
-        self.tree.column('Price', width=100)
-        self.tree.column('Substrate', width=100)
+        self.tree.column('Saatgutmenge', width=100)
+        self.tree.column('Einweichen', width=100)
+        self.tree.column('Keimung', width=100)
+        self.tree.column('Wachstum', width=100)
+        self.tree.column('Preis', width=100)
+        self.tree.column('Substrat', width=100)
 
         # Add scrollbar
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
@@ -102,8 +102,8 @@ class ItemView:
         btn_frame = ttk.Frame(list_frame)
         btn_frame.pack(fill='x', padx=5, pady=5)
         
-        ttk.Button(btn_frame, text="Edit", command=self.edit_item).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="Delete", command=self.delete_item).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Bearbeiten", command=self.edit_item).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Löschen", command=self.delete_item).pack(side='left', padx=5)
 
     def refresh_item_list(self):
         # Clear existing items
@@ -139,7 +139,7 @@ class ItemView:
             substrate = self.substrate_entry.get().strip()
 
             if not name:
-                raise ValueError("Please enter an item name")
+                raise ValueError("Bitte geben Sie einen Artikelnamen ein")
 
         except ValueError as e:
             messagebox.showerror("Error", str(e))
@@ -156,7 +156,7 @@ class ItemView:
                 self.current_item.price = price
                 self.current_item.substrate = substrate
                 self.current_item.save()
-                messagebox.showinfo("Success", "Item updated successfully")
+                messagebox.showinfo("Erfolg", "Artikel erfolgreich aktualisiert")
             else:
                 # Create new item
                 Item.create(
@@ -168,7 +168,7 @@ class ItemView:
                     price=price,
                     substrate=substrate
                 )
-                messagebox.showinfo("Success", "Item added successfully")
+                messagebox.showinfo("Erfolg", "Artikel erfolgreich hinzugefügt")
 
             self.cancel_edit()
             self.refresh_item_list()
@@ -178,7 +178,7 @@ class ItemView:
     def edit_item(self):
         selected_item = self.tree.selection()
         if not selected_item:
-            messagebox.showwarning("Warning", "Please select an item to edit")
+            messagebox.showwarning("Warnung", "Bitte wählen Sie einen Artikel zum Bearbeiten aus")
             return
 
         # Get item ID from selected item
@@ -202,7 +202,7 @@ class ItemView:
 
         # Set edit mode
         self.edit_mode = True
-        self.save_btn.configure(text="Update")
+        self.save_btn.configure(text="Aktualisieren")
         self.cancel_btn.pack(side='left', padx=5)
 
     def cancel_edit(self):
@@ -218,16 +218,16 @@ class ItemView:
         self.price_entry.delete(0, tk.END)
         self.substrate_entry.delete(0, tk.END)
         
-        self.save_btn.configure(text="Save")
+        self.save_btn.configure(text="Speichern")
         self.cancel_btn.pack_forget()
 
     def delete_item(self):
         selected_item = self.tree.selection()
         if not selected_item:
-            messagebox.showwarning("Warning", "Please select an item to delete")
+            messagebox.showwarning("Warnung", "Bitte wählen Sie einen Artikel zum Löschen aus")
             return
 
-        if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this item?"):
+        if messagebox.askyesno("Bestätigung", "Sind Sie sicher, dass Sie diesen Artikel löschen möchten?"):
             item_id = self.tree.item(selected_item[0])['values'][0]
             item = Item.get_by_id(item_id)
             item.delete_instance()

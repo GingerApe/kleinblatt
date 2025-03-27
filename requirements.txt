@@ -1,35 +1,18 @@
-# GUI Dependencies
-ttkbootstrap==1.10.1
-tkcalendar==1.6.1
-tkintertable==1.3.3
+# Hauptabhängigkeiten
+peewee==3.17.0         # ORM für die Datenbankinteraktion
+fpdf==1.7.2            # PDF-Generierung für Zeitpläne
+requests==2.31.0       # Für Update-Prüfungen
 
-# Data Processing
-numpy==2.0.2
-pandas==2.2.3
-peewee==3.17.9
+# Tkinter ist in den meisten Python-Installationen bereits enthalten
+# Für den Fall, dass zusätzliche tkinter-Komponenten benötigt werden:
+# tkcalendar==1.6.1      # Für Datumsauswahl in der Benutzeroberfläche (bei Bedarf)
 
-# PDF Generation
-fpdf2==2.8.2
-pillow==11.1.0
+# Python-Standardbibliotheken (keine Installation erforderlich)
+# datetime - Datums- und Zeitoperationen
+# uuid - Generierung von eindeutigen IDs
+# os - Betriebssysteminteraktion
+# collections - Spezielle Container-Datentypen
 
-# Date and Time
-python-dateutil==2.9.0.post0
-pytz==2025.1
-tzdata==2025.1
-babel==2.17.0
-
-# XML Processing
-defusedxml==0.7.1
-
-# Utilities
-six==1.17.0
-future==1.0.0
-
-# Build and Deployment Dependencies
-pyinstaller==6.5.0
-requests==2.31.0  # For update checking
-
-# Development Dependencies (optional)
-# pytest==8.0.2  # If you want to add tests
-# black==24.2.0  # For code formatting
-# flake8==7.0.0  # For linting
+# Optionale Abhängigkeiten für Entwicklung
+# pytest==7.4.0        # Für Testen
+# black==23.7.0        # Für Code-Formatierung 

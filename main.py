@@ -29,37 +29,6 @@ def check_for_updates():
         pass
     return False
 
-# Function to check for production orders on Sundays
-def check_sunday_production():
-    """
-    Check if there are any orders scheduled for production on Sundays.
-    This is a diagnostic function to help understand why Sundays might 
-    not show up in the production plan.
-    """
-    try:
-        # Get all orders
-        all_orders = Order.select()
-        
-        # Filter for Sunday production dates
-        sunday_orders = [order for order in all_orders if order.production_date.weekday() == 6]  # 6 = Sunday
-        
-        if sunday_orders:
-            messagebox.showinfo(
-                "Sunday Production Found", 
-                f"Found {len(sunday_orders)} orders with Sunday production dates.\n" +
-                f"First example: Order ID {sunday_orders[0].id}, " +
-                f"Production Date: {sunday_orders[0].production_date}, " +
-                f"Customer: {sunday_orders[0].customer.name}"
-            )
-        else:
-            messagebox.showinfo(
-                "No Sunday Production", 
-                "No orders with Sunday production dates were found in the database.\n" +
-                "This explains why no production entries appear on Sundays."
-            )
-    except Exception as e:
-        messagebox.showerror("Error", f"Error checking Sunday production: {str(e)}")
-
 class ProductionApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -166,6 +135,120 @@ class ProductionApp(tk.Tk):
         
         avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
         self.avg_order_value_var.set(f"Durchschn. Bestellwert: €{avg_order_value:.2f}".replace('.',','))
+        
+        # Update the item metrics
+        self.update_item_metrics()
+    
+    def update_item_metrics(self):
+        """Update the top lists and metrics for items"""
+        try:
+            # Clear existing data
+            for tree in [self.top_items_tree, self.least_items_tree, self.seasonal_tree]:
+                for item in tree.get_children():
+                    tree.delete(item)
+            
+            # Get item order statistics - most popular items by total amount sold
+            item_stats = (Item
+                        .select(Item,
+                               fn.SUM(OrderItem.amount).alias('total_amount'),
+                               fn.COUNT(OrderItem.id).alias('order_count'),
+                               fn.SUM(OrderItem.amount * Item.price).alias('total_revenue'))
+                        .join(OrderItem)
+                        .join(Order)
+                        .where(Order.is_future == False)
+                        .group_by(Item))
+            
+            # Sort by total amount for top items
+            top_items = sorted(item_stats, key=lambda x: x.total_amount or 0, reverse=True)[:5]
+            
+            # Add top items to tree
+            for item in top_items:
+                total_amount = item.total_amount or 0
+                order_count = item.order_count or 0
+                revenue = item.total_revenue or 0
+                
+                self.top_items_tree.insert('', 'end', values=(
+                    item.name,
+                    f"{total_amount:.1f}",
+                    order_count,
+                    f"€{revenue:.2f}".replace('.',',')
+                ))
+            
+            # Sort by total amount for least ordered items (non-zero orders)
+            non_zero_items = [item for item in item_stats if item.total_amount > 0]
+            least_items = sorted(non_zero_items, key=lambda x: x.total_amount or 0)[:5]
+            
+            # Add least ordered items to tree
+            for item in least_items:
+                total_amount = item.total_amount or 0
+                order_count = item.order_count or 0
+                revenue = item.total_revenue or 0
+                
+                self.least_items_tree.insert('', 'end', values=(
+                    item.name,
+                    f"{total_amount:.1f}",
+                    order_count,
+                    f"€{revenue:.2f}".replace('.',',')
+                ))
+            
+            # Get seasonal data for popular items
+            seasonal_items = sorted(item_stats, key=lambda x: x.total_amount or 0, reverse=True)[:10]
+            
+            for item in seasonal_items:
+                # Query quarterly data for this item
+                q1_amount = self.get_quarterly_amount(item, 1, 3)
+                q2_amount = self.get_quarterly_amount(item, 4, 6)
+                q3_amount = self.get_quarterly_amount(item, 7, 9)
+                q4_amount = self.get_quarterly_amount(item, 10, 12)
+                
+                # Determine trend
+                trend = self.determine_trend([q1_amount, q2_amount, q3_amount, q4_amount])
+                
+                self.seasonal_tree.insert('', 'end', values=(
+                    item.name,
+                    f"{q1_amount:.1f}",
+                    f"{q2_amount:.1f}",
+                    f"{q3_amount:.1f}",
+                    f"{q4_amount:.1f}",
+                    trend
+                ))
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to update item metrics: {str(e)}")
+    
+    def get_quarterly_amount(self, item, start_month, end_month):
+        """Get the total amount ordered for an item in a specific quarter"""
+        try:
+            result = (OrderItem
+                    .select(fn.SUM(OrderItem.amount).alias('q_amount'))
+                    .join(Order)
+                    .where(
+                        (OrderItem.item == item) &
+                        (Order.is_future == False) &
+                        (fn.EXTRACT('month', Order.delivery_date) >= start_month) &
+                        (fn.EXTRACT('month', Order.delivery_date) <= end_month)
+                    )
+                    .scalar())
+            return result or 0
+        except Exception:
+            return 0
+    
+    def determine_trend(self, quarterly_data):
+        """Determine the trend based on quarterly data"""
+        if all(x == 0 for x in quarterly_data):
+            return "No data"
+        
+        # Simplified trend analysis
+        if quarterly_data[0] < quarterly_data[1] < quarterly_data[2] < quarterly_data[3]:
+            return "Strong upward ↑↑"
+        elif quarterly_data[0] > quarterly_data[1] > quarterly_data[2] > quarterly_data[3]:
+            return "Strong downward ↓↓"
+        elif sum(quarterly_data[:2]) < sum(quarterly_data[2:]):
+            return "Slight upward ↑"
+        elif sum(quarterly_data[:2]) > sum(quarterly_data[2:]):
+            return "Slight downward ↓"
+        else:
+            return "Stable →"
     
     # Modify refresh_tables method to include items
     def refresh_tables(self):
@@ -239,13 +322,13 @@ class ProductionApp(tk.Tk):
         sub_details_frame = ttk.Frame(edit_window)
         sub_details_frame.pack(fill='x', padx=10, pady=5)
 
-        ttk.Label(sub_details_frame, text="Subscription Delivery Date Range:").pack(side='left', padx=5)
-        ttk.Label(sub_details_frame, text="From:").pack(side='left')
+        ttk.Label(sub_details_frame, text="Abonnement-Lieferzeiten:").pack(side='left', padx=5)
+        ttk.Label(sub_details_frame, text="Von:").pack(side='left')
         overall_from_entry = ttk.Entry(sub_details_frame, width=10)
         overall_from_entry.pack(side='left', padx=5)
         overall_from_entry.insert(0, from_date_val)
 
-        ttk.Label(sub_details_frame, text="To:").pack(side='left')
+        ttk.Label(sub_details_frame, text="Bis:").pack(side='left')
         overall_to_entry = ttk.Entry(sub_details_frame, width=10)
         overall_to_entry.pack(side='left', padx=5)
         overall_to_entry.insert(0, to_date_val)
@@ -286,7 +369,7 @@ class ProductionApp(tk.Tk):
             row_frame.pack(fill='x', pady=5)
 
             # Delivery Date for this order row.
-            ttk.Label(row_frame, text="Delivery Date:").grid(row=0, column=0, padx=5, pady=2)
+            ttk.Label(row_frame, text="Lieferdatum:").grid(row=0, column=0, padx=5, pady=2)
             delivery_entry = ttk.Entry(row_frame, width=12)
             delivery_entry.grid(row=0, column=1, padx=5, pady=2)
             if existing_order:
@@ -309,14 +392,14 @@ class ProductionApp(tk.Tk):
                 item_row_frame = ttk.Frame(items_frame)
                 item_row_frame.pack(fill='x', pady=2)
 
-                ttk.Label(item_row_frame, text="Item:").pack(side='left', padx=5)
+                ttk.Label(item_row_frame, text="Artikel:").pack(side='left', padx=5)
                 item_cb = AutocompleteCombobox(item_row_frame, width=20)
                 item_cb.set_completion_list(sorted(self.items.keys()))
                 item_cb.pack(side='left', padx=5)
                 if existing_order_item:
                     item_cb.set(existing_order_item.item.name)
 
-                ttk.Label(item_row_frame, text="Amount:").pack(side='left', padx=5)
+                ttk.Label(item_row_frame, text="Menge:").pack(side='left', padx=5)
                 amount_entry = ttk.Entry(item_row_frame, width=8)
                 amount_entry.pack(side='left', padx=5)
                 if existing_order_item:
@@ -327,7 +410,7 @@ class ProductionApp(tk.Tk):
                     item_row_frame.destroy()
                     item_rows.remove(item_dict)
 
-                del_button = ttk.Button(item_row_frame, text="Delete", command=delete_item)
+                del_button = ttk.Button(item_row_frame, text="Löschen", command=delete_item)
                 del_button.pack(side='left', padx=5)
 
                 item_dict = {
@@ -346,7 +429,7 @@ class ProductionApp(tk.Tk):
                 # New order: start with one empty item row.
                 add_item_row()
 
-            add_item_btn = ttk.Button(row_frame, text="Add Item", command=lambda: add_item_row())
+            add_item_btn = ttk.Button(row_frame, text="Artikel hinzufügen", command=lambda: add_item_row())
             add_item_btn.grid(row=0, column=2, padx=5, pady=2)
 
             def delete_order():
@@ -358,11 +441,11 @@ class ProductionApp(tk.Tk):
                     
                     if has_subscription:
                         choice = messagebox.askyesnocancel(
-                            "Delete Order", 
-                            "Do you want to delete only this order?\n\n"
-                            "Yes - Delete only this order\n"
-                            "No - Delete this and all future orders in this subscription\n"
-                            "Cancel - Do not delete anything"
+                            "Bestellung löschen", 
+                            "Möchten Sie nur diese Bestellung löschen?\n\n"
+                            "Ja - Nur diese Bestellung löschen\n"
+                            "Nein - Diese und alle zukünftigen Bestellungen in diesem Abonnement löschen\n"
+                            "Abbrechen - Nichts löschen"
                         )
                         
                         if choice is None:  # Cancel
@@ -371,7 +454,7 @@ class ProductionApp(tk.Tk):
                         with db.atomic():  # Transaction to ensure all operations succeed or fail together
                             if choice:  # Yes - Delete only this order
                                 existing_order.delete_instance(recursive=True)
-                                messagebox.showinfo("Success", "Order deleted successfully!")
+                                messagebox.showinfo("Erfolg", "Bestellung erfolgreich gelöscht!")
                             else:  # No - Delete this and all future orders
                                 today = datetime.now().date()
                                 future_orders = list(Order.select().where(
@@ -386,12 +469,12 @@ class ProductionApp(tk.Tk):
                                     future_order.delete_instance(recursive=True)
                                     deleted_count += 1
                                 
-                                messagebox.showinfo("Success", f"{deleted_count} orders deleted successfully!")
+                                messagebox.showinfo("Erfolg", f"{deleted_count} Bestellungen erfolgreich gelöscht!")
                     else:
                         # Not a subscription order, simple confirmation
-                        if messagebox.askyesno("Confirm", "Delete this order?"):
+                        if messagebox.askyesno("Bestätigen", "Diese Bestellung löschen?"):
                             existing_order.delete_instance(recursive=True)
-                            messagebox.showinfo("Success", "Order deleted successfully!")
+                            messagebox.showinfo("Erfolg", "Bestellung erfolgreich gelöscht!")
                     
                     row_frame.destroy()
                     order_rows.remove(order_row_dict)
@@ -400,7 +483,7 @@ class ProductionApp(tk.Tk):
                     row_frame.destroy()
                     order_rows.remove(order_row_dict)
 
-            del_order_btn = ttk.Button(row_frame, text="Delete Order", command=delete_order)
+            del_order_btn = ttk.Button(row_frame, text="Bestellung löschen", command=delete_order)
             del_order_btn.grid(row=0, column=3, padx=5, pady=2)
 
             order_row_dict = {
@@ -420,7 +503,7 @@ class ProductionApp(tk.Tk):
         buttons_frame.pack(side="bottom", fill="x", padx=10, pady=10)
 
         # Button to add a new order row.
-        add_order_overall_btn = ttk.Button(buttons_frame, text="Add New Order", command=lambda: add_order_row())
+        add_order_overall_btn = ttk.Button(buttons_frame, text="Neue Bestellung", command=lambda: add_order_row())
         add_order_overall_btn.pack(side="left", padx=5)
 
         def save_all_changes():
@@ -433,7 +516,7 @@ class ProductionApp(tk.Tk):
                     overall_from = datetime.strptime(overall_from_str, "%d.%m.%Y").date() if "." in overall_from_str else datetime.strptime(overall_from_str, "%Y-%m-%d").date()
                     overall_to = datetime.strptime(overall_to_str, "%d.%m.%Y").date() if "." in overall_to_str else datetime.strptime(overall_to_str, "%Y-%m-%d").date()
                 except ValueError:
-                    messagebox.showerror("Error", "Invalid date format. Use either dd.mm.yyyy or yyyy-mm-dd.")
+                    messagebox.showerror("Fehler", "Ungültiges Datumsformat. Verwenden Sie entweder dd.mm.yyyy oder yyyy-mm-dd.")
                     return
                 
                 with db.atomic():  # Use transaction to ensure all changes are saved or none
@@ -443,7 +526,7 @@ class ProductionApp(tk.Tk):
                         try:
                             delivery_date = datetime.strptime(delivery_date_str, "%d.%m.%Y").date()
                         except ValueError:
-                            messagebox.showerror("Error", f"Invalid date format: {delivery_date_str}. Use dd.mm.yyyy.")
+                            messagebox.showerror("Fehler", f"Ungültiges Datumsformat: {delivery_date_str}. Verwenden Sie dd.mm.yyyy.")
                             return
 
                         existing_order = row['existing_order']
@@ -457,16 +540,16 @@ class ProductionApp(tk.Tk):
                                 amount_str = item_row['amount_entry'].get().strip()
                                 amount = float(amount_str)
                                 if amount <= 0:
-                                    raise ValueError(f"Amount must be greater than 0 for item {item_name}")
+                                    raise ValueError(f"Menge muss größer als 0 sein für Artikel {item_name}")
                             except ValueError as e:
                                 if "could not convert string to float" in str(e):
-                                    messagebox.showerror("Error", f"Invalid amount for item {item_name}. Please enter a number.")
+                                    messagebox.showerror("Fehler", f"Ungültige Menge für Artikel {item_name}. Bitte geben Sie eine Zahl ein.")
                                 else:
-                                    messagebox.showerror("Error", str(e))
+                                    messagebox.showerror("Fehler", str(e))
                                 return
                             
                             if item_name not in self.items:
-                                messagebox.showerror("Error", f"Invalid item: {item_name}")
+                                messagebox.showerror("Fehler", f"Ungültiger Artikel: {item_name}")
                                 return
                             
                             order_items_data.append((item_name, amount))
@@ -496,7 +579,7 @@ class ProductionApp(tk.Tk):
                                 subscription_type = subscription_orders[0].subscription_type
                                 halbe_channel = subscription_orders[0].halbe_channel
                             else:
-                                messagebox.showerror("Error", "Cannot determine customer for new order.")
+                                messagebox.showerror("Fehler", "Kunde für neue Bestellung kann nicht bestimmt werden.")
                                 return
                             
                             # Calculate production date based on max days
@@ -524,14 +607,14 @@ class ProductionApp(tk.Tk):
                                     amount=amount
                                 )
                 
-                messagebox.showinfo("Success", "Orders updated successfully!")
+                messagebox.showinfo("Erfolg", "Bestellungen erfolgreich aktualisiert!")
                 edit_window.destroy()
                 self.on_customer_select(None)  # Refresh orders list
                 
             except Exception as e:
-                messagebox.showerror("Error", f"An error occurred: {str(e)}")
+                messagebox.showerror("Fehler", f"Ein Fehler ist aufgetreten: {str(e)}")
         # Save button
-        save_btn = ttk.Button(buttons_frame, text="Save All Changes", command=save_all_changes)
+        save_btn = ttk.Button(buttons_frame, text="Alle Änderungen speichern", command=save_all_changes)
         save_btn.pack(side="right", padx=5)
 
         # Add mouse wheel binding to the canvas for better scrolling
@@ -544,53 +627,53 @@ class ProductionApp(tk.Tk):
             
     def create_order_tab(self):
         # Customer Frame
-        customer_frame = ttk.LabelFrame(self.tab1, text="Customer Information", padding="10")
+        customer_frame = ttk.LabelFrame(self.tab1, text="Kundeninformationen", padding="10")
         customer_frame.pack(fill='x', padx=10, pady=5)
         
-        ttk.Label(customer_frame, text="Customer:").pack(side='left', padx=5)
+        ttk.Label(customer_frame, text="Kunde:").pack(side='left', padx=5)
         self.customer_combo = AutocompleteCombobox(customer_frame, width=50)
         self.customer_combo.set_completion_list(sorted(self.customers.keys()))
         self.customer_combo.pack(side='left', padx=5, fill='x', expand=True)
         
         # Items Frame
-        items_frame = ttk.LabelFrame(self.tab1, text="Order Items", padding="10")
+        items_frame = ttk.LabelFrame(self.tab1, text="Bestellte Artikel", padding="10")
         items_frame.pack(fill='both', expand=True, padx=10, pady=5)
         
         # Add item controls
         add_frame = ttk.Frame(items_frame)
         add_frame.pack(fill='x', padx=5, pady=5)
         
-        ttk.Label(add_frame, text="Item:").pack(side='left', padx=5)
+        ttk.Label(add_frame, text="Artikel:").pack(side='left', padx=5)
         self.item_combo = AutocompleteCombobox(add_frame, width=30)
         self.item_combo.set_completion_list(sorted(self.items.keys()))
         self.item_combo.pack(side='left', padx=5)
         
-        ttk.Label(add_frame, text="Amount:").pack(side='left', padx=5)
+        ttk.Label(add_frame, text="Menge:").pack(side='left', padx=5)
         self.amount_var = tk.StringVar()
         amount_entry = ttk.Entry(add_frame, textvariable=self.amount_var, width=10)
         amount_entry.pack(side='left', padx=5)
         
-        ttk.Button(add_frame, text="Add Item", command=self.add_item).pack(side='left', padx=5)
+        ttk.Button(add_frame, text="Artikel hinzufügen", command=self.add_item).pack(side='left', padx=5)
         
         # Items list
-        columns = ('Item', 'Amount', 'Growth Days', 'Price')
+        columns = ('Artikel', 'Menge', 'Wachstumstage', 'Preis')
         self.items_tree = ttk.Treeview(items_frame, columns=columns, show='headings', height=10)
         for col in columns:
             self.items_tree.heading(col, text=col)
         self.items_tree.pack(fill='both', expand=True, padx=5, pady=5)
         
-        ttk.Button(items_frame, text="Remove Selected", 
+        ttk.Button(items_frame, text="Ausgewählte entfernen", 
                   command=self.remove_selected_item).pack(pady=5)
         
         # Order Details Frame
-        details_frame = ttk.LabelFrame(self.tab1, text="Order Details", padding="10")
+        details_frame = ttk.LabelFrame(self.tab1, text="Bestelldetails", padding="10")
         details_frame.pack(fill='x', padx=10, pady=5)
         
         # Delivery Date
         date_frame = ttk.Frame(details_frame)
         date_frame.pack(fill='x', pady=5)
         
-        ttk.Label(date_frame, text="Delivery Date:").pack(side='left', padx=5)
+        ttk.Label(date_frame, text="Lieferdatum:").pack(side='left', padx=5)
         self.delivery_date = self.create_date_entry(date_frame)
         
         # Set default date to today
@@ -603,11 +686,11 @@ class ProductionApp(tk.Tk):
         
         self.sub_var = tk.IntVar(value=0)
         sub_types = {
-            0: "No subscription",
-            1: "Weekly",
-            2: "Bi-weekly",
-            3: "Every 3 weeks",
-            4: "Every 4 weeks"
+            0: "Kein Abonnement",
+            1: "Wöchentlich",
+            2: "Zweiwöchentlich",
+            3: "Alle 3 Wochen",
+            4: "Alle 4 Wochen"
         }
         for val, text in sub_types.items():
             ttk.Radiobutton(sub_frame, text=text, variable=self.sub_var, 
@@ -617,10 +700,10 @@ class ProductionApp(tk.Tk):
         range_frame = ttk.Frame(details_frame)
         range_frame.pack(fill='x', pady=5)
         
-        ttk.Label(range_frame, text="From:").pack(side='left', padx=5)
+        ttk.Label(range_frame, text="Von:").pack(side='left', padx=5)
         self.from_date = self.create_date_entry(range_frame)
         
-        ttk.Label(range_frame, text="To:").pack(side='left', padx=5)
+        ttk.Label(range_frame, text="Bis:").pack(side='left', padx=5)
         self.to_date = self.create_date_entry(range_frame)
         
         # Set default dates
@@ -633,7 +716,7 @@ class ProductionApp(tk.Tk):
                        variable=self.halbe_var).pack(pady=5)
         
         # Save Button
-        ttk.Button(self.tab1, text="Save Order", 
+        ttk.Button(self.tab1, text="Bestellung speichern", 
                   command=self.save_order).pack(pady=10)
 
         # Add this new code at the end
@@ -641,11 +724,11 @@ class ProductionApp(tk.Tk):
         button_frame.pack(pady=10)
         
         # Save Order button
-        ttk.Button(button_frame, text="Save Order", 
+        ttk.Button(button_frame, text="Bestellung speichern", 
                 command=self.save_order).pack(side='left', padx=5)
         
         # Master Print button
-        ttk.Button(button_frame, text="Print All Schedules", 
+        ttk.Button(button_frame, text="Alle Zeitpläne drucken", 
                 command=self.print_all_schedules).pack(side='left', padx=5)
     
     def create_orders_tab(self):
@@ -680,14 +763,79 @@ class ProductionApp(tk.Tk):
         summary_frame = ttk.LabelFrame(customer_frame, text="Zusammenfassung")
         summary_frame.pack(fill='x', padx=5, pady=5, anchor='s')
         
-        # Total metrics display
+        # Total metrics display with larger font
         self.total_customers_var = tk.StringVar(value="Anzahl Kunden: 0")
         self.total_revenue_var = tk.StringVar(value="Gesamtumsatz: €0,00")
         self.avg_order_value_var = tk.StringVar(value="Durchschn. Bestellwert: €0,00")
         
-        ttk.Label(summary_frame, textvariable=self.total_customers_var, font=("", 10, "bold")).pack(side='left', padx=20, pady=5)
-        ttk.Label(summary_frame, textvariable=self.total_revenue_var, font=("", 10, "bold")).pack(side='left', padx=20, pady=5)
-        ttk.Label(summary_frame, textvariable=self.avg_order_value_var, font=("", 10, "bold")).pack(side='left', padx=20, pady=5)
+        # Use larger and bolder font for the summary metrics
+        ttk.Label(summary_frame, textvariable=self.total_customers_var, font=("", 14, "bold")).pack(side='left', padx=20, pady=5)
+        ttk.Label(summary_frame, textvariable=self.total_revenue_var, font=("", 14, "bold")).pack(side='left', padx=20, pady=5)
+        ttk.Label(summary_frame, textvariable=self.avg_order_value_var, font=("", 14, "bold")).pack(side='left', padx=20, pady=5)
+        
+        # Create metrics notebook for top lists and analysis
+        metrics_notebook = ttk.Notebook(customer_frame)
+        metrics_notebook.pack(fill='both', expand=True, padx=5, pady=5, before=summary_frame)
+        
+        # Tab for top ordered items
+        top_items_frame = ttk.Frame(metrics_notebook)
+        least_items_frame = ttk.Frame(metrics_notebook)
+        seasonal_frame = ttk.Frame(metrics_notebook)
+        
+        metrics_notebook.add(top_items_frame, text="Top Artikel")
+        metrics_notebook.add(least_items_frame, text="Wenig bestellte Artikel")
+        metrics_notebook.add(seasonal_frame, text="Saisonale Analyse")
+        
+        # Create treeview for top items
+        top_items_tree = ttk.Treeview(top_items_frame, columns=('Artikel', 'Kanäle Gesamt', 'Bestellungen', 'Umsatz'), show='headings', height=6)
+        top_items_tree.heading('Artikel', text='Artikel')
+        top_items_tree.heading('Kanäle Gesamt', text='Kanäle Gesamt')
+        top_items_tree.heading('Bestellungen', text='Bestellungen')
+        top_items_tree.heading('Umsatz', text='Umsatz')
+        
+        top_items_tree.column('Artikel', width=200)
+        top_items_tree.column('Kanäle Gesamt', width=100)
+        top_items_tree.column('Bestellungen', width=100)
+        top_items_tree.column('Umsatz', width=100)
+        
+        top_items_tree.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Create treeview for least ordered items
+        least_items_tree = ttk.Treeview(least_items_frame, columns=('Artikel', 'Kanäle Gesamt', 'Bestellungen', 'Umsatz'), show='headings', height=6)
+        least_items_tree.heading('Artikel', text='Artikel')
+        least_items_tree.heading('Kanäle Gesamt', text='Kanäle Gesamt')
+        least_items_tree.heading('Bestellungen', text='Bestellungen')
+        least_items_tree.heading('Umsatz', text='Umsatz')
+        
+        least_items_tree.column('Artikel', width=200)
+        least_items_tree.column('Kanäle Gesamt', width=100)
+        least_items_tree.column('Bestellungen', width=100)
+        least_items_tree.column('Umsatz', width=100)
+        
+        least_items_tree.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Create treeview for seasonal analysis
+        seasonal_tree = ttk.Treeview(seasonal_frame, columns=('Artikel', 'Q1', 'Q2', 'Q3', 'Q4', 'Trend'), show='headings', height=6)
+        seasonal_tree.heading('Artikel', text='Artikel')
+        seasonal_tree.heading('Q1', text='Q1 (Jan-Mär)')
+        seasonal_tree.heading('Q2', text='Q2 (Apr-Jun)')
+        seasonal_tree.heading('Q3', text='Q3 (Jul-Sep)')
+        seasonal_tree.heading('Q4', text='Q4 (Okt-Dez)')
+        seasonal_tree.heading('Trend', text='Trend')
+        
+        seasonal_tree.column('Artikel', width=150)
+        seasonal_tree.column('Q1', width=100)
+        seasonal_tree.column('Q2', width=100)
+        seasonal_tree.column('Q3', width=100)
+        seasonal_tree.column('Q4', width=100)
+        seasonal_tree.column('Trend', width=150)
+        
+        seasonal_tree.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Save tree references for updates
+        self.top_items_tree = top_items_tree
+        self.least_items_tree = least_items_tree
+        self.seasonal_tree = seasonal_tree
         
         # Bind selection event
         self.customer_tree.bind('<<TreeviewSelect>>', self.on_customer_select)
@@ -708,10 +856,10 @@ class ProductionApp(tk.Tk):
         button_frame.pack(fill='x', pady=5)
         
         # Button to edit selected order
-        ttk.Button(button_frame, text="Edit Order", command=self.edit_order).pack(side='left', padx=5)
+        ttk.Button(button_frame, text="Bestellung bearbeiten", command=self.edit_order).pack(side='left', padx=5)
         
         # Refresh button
-        ttk.Button(button_frame, text="Refresh Data", command=self.load_customers).pack(side='right', padx=5)
+        ttk.Button(button_frame, text="Daten aktualisieren", command=self.load_customers).pack(side='right', padx=5)
         
         self.load_customers()
 
@@ -823,11 +971,11 @@ class ProductionApp(tk.Tk):
             # Confirm with user if production date falls on Sunday
             if production_date.weekday() == 6:  # 6 = Sunday
                 use_sunday = messagebox.askyesnocancel(
-                    "Sunday Production",
-                    f"This order's production date falls on a Sunday ({production_date.strftime('%d.%m.%Y')}).\n\n"
-                    "Yes: Keep Sunday as production date\n"
-                    "No: Move to Saturday instead\n"
-                    "Cancel: Abort saving the order"
+                    "Sonntagsproduktion",
+                    f"Das Produktionsdatum dieser Bestellung fällt auf einen Sonntag ({production_date.strftime('%d.%m.%Y')}).\n\n"
+                    "Ja: Sonntag als Produktionsdatum beibehalten\n"
+                    "Nein: Stattdessen auf Samstag verschieben\n"
+                    "Abbrechen: Speichern der Bestellung abbrechen"
                 )
                 
                 if use_sunday is None:  # User clicked Cancel
@@ -874,12 +1022,12 @@ class ProductionApp(tk.Tk):
                                 amount=item_data['amount']
                             )
             
-            messagebox.showinfo("Success", "Order saved successfully!")
+            messagebox.showinfo("Erfolg", "Bestellung erfolgreich gespeichert!")
             self.clear_form()
             self.refresh_tables()
             
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            messagebox.showerror("Fehler", str(e))
     
     def clear_form(self):
         self.customer_combo.set('')
@@ -902,7 +1050,7 @@ class ProductionApp(tk.Tk):
         print_frame = ttk.Frame(self.tab2)
         print_frame.pack(fill='x', padx=5, pady=5)
         
-        ttk.Button(print_frame, text="Print Delivery Schedule",
+        ttk.Button(print_frame, text="Lieferplan drucken",
                 command=lambda: self.print_single_schedule("delivery")).pack(side='right')
         
         # Pass self (the ProductionApp instance) to WeeklyDeliveryView
@@ -913,12 +1061,8 @@ class ProductionApp(tk.Tk):
         print_frame = ttk.Frame(self.tab3)
         print_frame.pack(fill='x', padx=5, pady=5)
         
-        ttk.Button(print_frame, text="Print Production Plan",
+        ttk.Button(print_frame, text="Produktionsplan drucken",
                 command=lambda: self.print_single_schedule("production")).pack(side='right')
-        
-        # Add diagnostic button for Sunday production check
-        ttk.Button(print_frame, text="Check Sunday Production",
-                command=check_sunday_production).pack(side='left', padx=5)
         
         self.production_view = WeeklyProductionView(self.tab3)
 
@@ -927,7 +1071,7 @@ class ProductionApp(tk.Tk):
         print_frame = ttk.Frame(self.tab4)
         print_frame.pack(fill='x', padx=5, pady=5)
         
-        ttk.Button(print_frame, text="Print Transfer Schedule",
+        ttk.Button(print_frame, text="Transferplan drucken",
                 command=lambda: self.print_single_schedule("transfer")).pack(side='right')
         
         self.transfer_view = WeeklyTransferView(self.tab4)
@@ -959,9 +1103,9 @@ class ProductionApp(tk.Tk):
                 
                 filepath = self.printer.print_all_schedules(week_date)
                 self.open_pdf(filepath)
-                messagebox.showinfo("Success", "All schedules have been printed successfully!")
+                messagebox.showinfo("Erfolg", "Alle Zeitpläne wurden erfolgreich gedruckt!")
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to print schedules: {str(e)}")
+            messagebox.showerror("Fehler", f"Zeitpläne konnten nicht gedruckt werden: {str(e)}")
 
     def print_single_schedule(self, schedule_type):
         """Print a single schedule and open the PDF"""
@@ -978,11 +1122,11 @@ class ProductionApp(tk.Tk):
             if current_week:
                 filepath = self.printer.print_week_schedule(schedule_type, current_week)
                 self.open_pdf(filepath)
-                messagebox.showinfo("Success", f"{schedule_type.title()} schedule has been printed successfully!")
+                messagebox.showinfo("Erfolg", f"{schedule_type.title()}-Plan wurde erfolgreich gedruckt!")
             else:
-                messagebox.showerror("Error", "Could not determine the current week")
+                messagebox.showerror("Fehler", "Aktuelle Woche konnte nicht bestimmt werden")
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to print {schedule_type} schedule: {str(e)}")
+            messagebox.showerror("Fehler", f"{schedule_type}-Plan konnte nicht gedruckt werden: {str(e)}")
 
     def open_pdf(self, filepath):
         """Open the generated PDF file with the default system viewer"""
@@ -995,7 +1139,7 @@ class ProductionApp(tk.Tk):
                 else:  # Linux
                     os.system(f'xdg-open "{filepath}"')
         except Exception as e:
-            messagebox.showwarning("Warning", f"PDF was created but couldn't be opened automatically: {filepath}")
+            messagebox.showwarning("Warnung", f"PDF wurde erstellt, konnte aber nicht automatisch geöffnet werden: {filepath}")
 
 if __name__ == "__main__":
     check_for_updates()

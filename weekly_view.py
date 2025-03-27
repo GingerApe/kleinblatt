@@ -43,7 +43,7 @@ class WeeklyBaseView:
         self.parent.pack_propagate(False)
         
         monday = self.get_monday_of_week()
-        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        days = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag']
         
         # Configure column weights to ensure equal sizing
         for i in range(7):
@@ -141,7 +141,7 @@ class WeeklyBaseView:
 
     def update_day_labels(self):
         monday = self.get_monday_of_week()
-        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        days = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag']
         
         for i, day in enumerate(days):
             date = monday + timedelta(days=i)
@@ -155,7 +155,7 @@ class WeeklyBaseView:
         monday = self.current_week - timedelta(days=self.current_week.weekday())
         sunday = monday + timedelta(days=6)
         self.week_label.config(
-            text=f"Week {monday.strftime('%d.%m.%Y')} - {sunday.strftime('%d.%m.%Y')}"
+            text=f"Woche {monday.strftime('%d.%m.%Y')} - {sunday.strftime('%d.%m.%Y')}"
         )
     
     def clear_day_frames(self):
@@ -168,9 +168,23 @@ class WeeklyBaseView:
 
     def highlight_current_day(self):
         today = datetime.now().date()
-        day_name = today.strftime('%A')
-        if day_name in self.day_labels:
-            frame = self.day_labels[day_name]
+        
+        # Mapping between English day names and German day names
+        day_mapping = {
+            'Monday': 'Montag',
+            'Tuesday': 'Dienstag',
+            'Wednesday': 'Mittwoch',
+            'Thursday': 'Donnerstag',
+            'Friday': 'Freitag',
+            'Saturday': 'Samstag',
+            'Sunday': 'Sonntag'
+        }
+        
+        day_name = today.strftime('%A')  # This gives English day name
+        german_day_name = day_mapping.get(day_name)  # Map to German day name
+        
+        if german_day_name in self.day_labels:
+            frame = self.day_labels[german_day_name]
             # Apply a highlight style if available, otherwise use a background color
             try:
                 frame.configure(style='Green.TLabelframe')
@@ -206,31 +220,31 @@ class WeeklyDeliveryView(WeeklyBaseView):
     def open_new_order_window(self, day):
         """Open a new window to create an order for the specified day."""
         new_order_window = tk.Toplevel(self.parent)
-        new_order_window.title(f"Create New Order for {day}")
+        new_order_window.title(f"Neue Bestellung für {day}")
 
         # Customer Frame
-        customer_frame = ttk.LabelFrame(new_order_window, text="Customer Information", padding="10")
+        customer_frame = ttk.LabelFrame(new_order_window, text="Kundeninformationen", padding="10")
         customer_frame.pack(fill='x', padx=10, pady=5)
         
-        ttk.Label(customer_frame, text="Customer:").pack(side='left', padx=5)
+        ttk.Label(customer_frame, text="Kunde:").pack(side='left', padx=5)
         customer_combo = AutocompleteCombobox(customer_frame, width=50)
         customer_combo.set_completion_list(sorted(self.app.customers.keys()))
         customer_combo.pack(side='left', padx=5, fill='x', expand=True)
         
         # Items Frame
-        items_frame = ttk.LabelFrame(new_order_window, text="Order Items", padding="10")
+        items_frame = ttk.LabelFrame(new_order_window, text="Bestellte Artikel", padding="10")
         items_frame.pack(fill='both', expand=True, padx=10, pady=5)
         
         # Add item controls
         add_frame = ttk.Frame(items_frame)
         add_frame.pack(fill='x', padx=5, pady=5)
         
-        ttk.Label(add_frame, text="Item:").pack(side='left', padx=5)
+        ttk.Label(add_frame, text="Artikel:").pack(side='left', padx=5)
         item_combo = AutocompleteCombobox(add_frame, width=30)
         item_combo.set_completion_list(sorted(self.app.items.keys()))
         item_combo.pack(side='left', padx=5)
         
-        ttk.Label(add_frame, text="Amount:").pack(side='left', padx=5)
+        ttk.Label(add_frame, text="Menge:").pack(side='left', padx=5)
         amount_var = tk.StringVar()
         amount_entry = ttk.Entry(add_frame, textvariable=amount_var, width=10)
         amount_entry.pack(side='left', padx=5)
@@ -243,10 +257,10 @@ class WeeklyDeliveryView(WeeklyBaseView):
                 amount = float(amount_var.get())
                 
                 if not item_name or item_name not in self.app.items:
-                    raise ValueError("Please select a valid item")
+                    raise ValueError("Bitte wählen Sie einen gültigen Artikel")
                 
                 if amount <= 0:
-                    raise ValueError("Amount must be greater than 0")
+                    raise ValueError("Menge muss größer als 0 sein")
                 
                 item = self.app.items[item_name]
                 order_items.append({
@@ -266,12 +280,12 @@ class WeeklyDeliveryView(WeeklyBaseView):
                 amount_var.set('')
                 
             except ValueError as e:
-                messagebox.showerror("Error", str(e))
+                messagebox.showerror("Fehler", str(e))
         
-        ttk.Button(add_frame, text="Add Item", command=add_item).pack(side='left', padx=5)
+        ttk.Button(add_frame, text="Artikel hinzufügen", command=add_item).pack(side='left', padx=5)
         
         # Items list
-        columns = ('Item', 'Amount', 'Growth Days', 'Price')
+        columns = ('Artikel', 'Menge', 'Wachstumstage', 'Preis')
         items_tree = ttk.Treeview(items_frame, columns=columns, show='headings', height=10)
         for col in columns:
             items_tree.heading(col, text=col)
@@ -287,23 +301,23 @@ class WeeklyDeliveryView(WeeklyBaseView):
                 order_items.pop(item_index)
                 items_tree.delete(item_id)
         
-        ttk.Button(items_frame, text="Remove Selected", 
+        ttk.Button(items_frame, text="Ausgewählte entfernen", 
                   command=remove_selected_item).pack(pady=5)
         
         # Order Details Frame
-        details_frame = ttk.LabelFrame(new_order_window, text="Order Details", padding="10")
+        details_frame = ttk.LabelFrame(new_order_window, text="Bestelldetails", padding="10")
         details_frame.pack(fill='x', padx=10, pady=5)
         
         # Delivery Date
         date_frame = ttk.Frame(details_frame)
         date_frame.pack(fill='x', pady=5)
         
-        ttk.Label(date_frame, text="Delivery Date:").pack(side='left', padx=5)
+        ttk.Label(date_frame, text="Lieferdatum:").pack(side='left', padx=5)
         delivery_date = self.app.create_date_entry(date_frame)
         
         # Set default date to the selected day
         monday = self.get_monday_of_week()
-        days_index = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
+        days_index = {"Montag": 0, "Dienstag": 1, "Mittwoch": 2, "Donnerstag": 3, "Freitag": 4, "Samstag": 5, "Sonntag": 6}
         selected_date = monday + timedelta(days=days_index[day])
         self.app.set_date_entry(delivery_date, selected_date)
         
@@ -313,11 +327,11 @@ class WeeklyDeliveryView(WeeklyBaseView):
         
         sub_var = tk.IntVar(value=0)
         sub_types = {
-            0: "No subscription",
-            1: "Weekly",
-            2: "Bi-weekly",
-            3: "Every 3 weeks",
-            4: "Every 4 weeks"
+            0: "Kein Abonnement",
+            1: "Wöchentlich",
+            2: "Zweiwöchentlich",
+            3: "Alle 3 Wochen",
+            4: "Alle 4 Wochen"
         }
         for val, text in sub_types.items():
             ttk.Radiobutton(sub_frame, text=text, variable=sub_var, 
@@ -327,10 +341,10 @@ class WeeklyDeliveryView(WeeklyBaseView):
         range_frame = ttk.Frame(details_frame)
         range_frame.pack(fill='x', pady=5)
         
-        ttk.Label(range_frame, text="From:").pack(side='left', padx=5)
+        ttk.Label(range_frame, text="Von:").pack(side='left', padx=5)
         from_date = self.app.create_date_entry(range_frame)
         
-        ttk.Label(range_frame, text="To:").pack(side='left', padx=5)
+        ttk.Label(range_frame, text="Bis:").pack(side='left', padx=5)
         to_date = self.app.create_date_entry(range_frame)
         
         # Set default dates
@@ -345,10 +359,10 @@ class WeeklyDeliveryView(WeeklyBaseView):
         def save_order():
             try:
                 if not customer_combo.get() or customer_combo.get() not in self.app.customers:
-                    raise ValueError("Please select a valid customer")
+                    raise ValueError("Bitte wählen Sie einen gültigen Kunden")
                 
                 if not order_items:
-                    raise ValueError("Please add at least one item to the order")
+                    raise ValueError("Bitte fügen Sie mindestens einen Artikel zur Bestellung hinzu")
                 
                 customer = self.app.customers[customer_combo.get()]
                 delivery_date_value = self.app.get_date_from_entry(delivery_date)
@@ -395,15 +409,15 @@ class WeeklyDeliveryView(WeeklyBaseView):
                                     amount=item_data['amount']
                                 )
                 
-                messagebox.showinfo("Success", "Order saved successfully!")
+                messagebox.showinfo("Erfolg", "Bestellung erfolgreich gespeichert!")
                 new_order_window.destroy()
                 self.refresh()
                 
             except Exception as e:
-                messagebox.showerror("Error", str(e))
+                messagebox.showerror("Fehler", str(e))
         
         # Save Button
-        ttk.Button(new_order_window, text="Save Order", 
+        ttk.Button(new_order_window, text="Bestellung speichern", 
                   command=save_order).pack(pady=10)
 
     def refresh(self):
@@ -412,7 +426,7 @@ class WeeklyDeliveryView(WeeklyBaseView):
         end_of_week = monday + timedelta(days=6)
         deliveries = get_delivery_schedule(monday, end_of_week)
 
-        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        days = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag']
         for i, day in enumerate(days):
             date = monday + timedelta(days=i)
             date_str = date.strftime('%d.%m')
@@ -531,7 +545,7 @@ class WeeklyDeliveryView(WeeklyBaseView):
         # Read the customer name (if any) from the new order entry
         customer_name = entry.get()
         monday = self.get_monday_of_week()
-        days_index = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
+        days_index = {"Montag": 0, "Dienstag": 1, "Mittwoch": 2, "Donnerstag": 3, "Freitag": 4, "Samstag": 5, "Sonntag": 6}
         delivery_date = monday + timedelta(days=days_index[day])
         # Open the order editor in "create" mode (order=None) with an optional prefilled customer name
         self.open_order_editor(delivery_date, order=None, prefill_customer=customer_name)
@@ -553,7 +567,7 @@ class WeeklyDeliveryView(WeeklyBaseView):
         # --- Delivery Date Section ---
         date_frame = ttk.Frame(edit_window)
         date_frame.pack(fill='x', padx=10, pady=5)
-        ttk.Label(date_frame, text="Delivery Date:").pack(side='left', padx=5)
+        ttk.Label(date_frame, text="Lieferdatum:").pack(side='left', padx=5)
         delivery_date_entry = ttk.Entry(date_frame, width=12)
         delivery_date_entry.pack(side='left', padx=5)
         delivery_date_entry.insert(0, delivery_date.strftime('%d.%m.%Y'))
@@ -563,7 +577,7 @@ class WeeklyDeliveryView(WeeklyBaseView):
         if not order:
             cust_frame = ttk.Frame(edit_window)
             cust_frame.pack(fill='x', padx=10, pady=5)
-            ttk.Label(cust_frame, text="Customer:").pack(side='left', padx=5)
+            ttk.Label(cust_frame, text="Kunde:").pack(side='left', padx=5)
             customer_cb = AutocompleteCombobox(cust_frame, width=30)
             customer_cb.set_completion_list(sorted(self.app.customers.keys()))
             customer_cb.pack(side='left', padx=5)
@@ -582,11 +596,11 @@ class WeeklyDeliveryView(WeeklyBaseView):
         ttk.Label(sub_type_frame, text="Subscription Type:").pack(side='left', padx=5)
         
         sub_types = {
-            0: "No subscription",
-            1: "Weekly",
-            2: "Bi-weekly",
-            3: "Every 3 weeks",
-            4: "Every 4 weeks"
+            0: "Kein Abonnement",
+            1: "Wöchentlich",
+            2: "Zweiwöchentlich",
+            3: "Alle 3 Wochen",
+            4: "Alle 4 Wochen"
         }
         
         # Create dropdown for subscription type instead of radio buttons
@@ -598,11 +612,11 @@ class WeeklyDeliveryView(WeeklyBaseView):
         # Create frame for date range
         date_range_frame = ttk.Frame(subscription_frame)
         date_range_frame.pack(fill='x', padx=5, pady=5)
-        ttk.Label(date_range_frame, text="From:").pack(side='left', padx=5)
+        ttk.Label(date_range_frame, text="Von:").pack(side='left', padx=5)
         from_date_entry = ttk.Entry(date_range_frame, width=12)
         from_date_entry.pack(side='left', padx=5)
         
-        ttk.Label(date_range_frame, text="To:").pack(side='left', padx=5)
+        ttk.Label(date_range_frame, text="Bis:").pack(side='left', padx=5)
         to_date_entry = ttk.Entry(date_range_frame, width=12)
         to_date_entry.pack(side='left', padx=5)
         
@@ -645,13 +659,13 @@ class WeeklyDeliveryView(WeeklyBaseView):
         def add_item_row(existing_order_item=None):
             row_frame = ttk.Frame(scrollable_frame)
             row_frame.pack(fill='x', pady=2)
-            ttk.Label(row_frame, text="Item:").pack(side='left', padx=5)
+            ttk.Label(row_frame, text="Artikel:").pack(side='left', padx=5)
             item_cb = AutocompleteCombobox(row_frame, width=20)
             item_cb.set_completion_list(sorted(self.app.items.keys()))
             item_cb.pack(side='left', padx=5)
             if existing_order_item:
                 item_cb.set(existing_order_item.item.name)
-            ttk.Label(row_frame, text="Amount:").pack(side='left', padx=5)
+            ttk.Label(row_frame, text="Menge:").pack(side='left', padx=5)
             amount_entry = ttk.Entry(row_frame, width=8)
             amount_entry.pack(side='left', padx=5)
             if existing_order_item:
@@ -675,7 +689,7 @@ class WeeklyDeliveryView(WeeklyBaseView):
         else:
             add_item_row()  # start with one empty item row
         
-        add_item_btn = ttk.Button(edit_window, text="Add Item", command=lambda: add_item_row())
+        add_item_btn = ttk.Button(edit_window, text="Artikel hinzufügen", command=lambda: add_item_row())
         add_item_btn.pack(pady=5)
         
         # --- Update Type Frame for edit scope---
@@ -713,7 +727,7 @@ class WeeklyDeliveryView(WeeklyBaseView):
                 try:
                     new_date = datetime.strptime(new_date_str, "%d.%m.%Y").date()
                 except ValueError:
-                    messagebox.showerror("Error", f"Invalid date format: {new_date_str}. Use dd.mm.yyyy.")
+                    messagebox.showerror("Fehler", f"Ungültiges Datumsformat. Verwenden Sie dd.mm.yyyy")
                     return
                 
                 # Parse subscription dates
@@ -722,10 +736,10 @@ class WeeklyDeliveryView(WeeklyBaseView):
                         from_date = datetime.strptime(from_date_entry.get(), "%d.%m.%Y").date()
                         to_date = datetime.strptime(to_date_entry.get(), "%d.%m.%Y").date()
                         if from_date > to_date:
-                            messagebox.showerror("Error", "From date must be before To date.")
+                            messagebox.showerror("Fehler", "Von-Datum muss vor Bis-Datum liegen")
                             return
                     except ValueError:
-                        messagebox.showerror("Error", "Invalid date format for subscription range. Use dd.mm.yyyy.")
+                        messagebox.showerror("Fehler", "Ungültiges Datumsformat für Abonnementzeitraum. Verwenden Sie dd.mm.yyyy")
                         return
                 else:
                     from_date = None
@@ -741,10 +755,10 @@ class WeeklyDeliveryView(WeeklyBaseView):
                     try:
                         amount = float(row['amount_entry'].get())
                     except ValueError:
-                        messagebox.showerror("Error", f"Invalid amount for item {item_name}.")
+                        messagebox.showerror("Fehler", f"Ungültige Menge für Artikel {item_name}")
                         return
                     if item_name not in self.app.items:
-                        messagebox.showerror("Error", f"Invalid item: {item_name}.")
+                        messagebox.showerror("Fehler", f"Ungültiger Artikel: {item_name}")
                         return
                     order_items_data.append((item_name, amount))
                 
@@ -772,11 +786,11 @@ class WeeklyDeliveryView(WeeklyBaseView):
                                 )
                         else:  # Creating new order
                             if customer_cb is None:
-                                messagebox.showerror("Error", "Customer selection is required.")
+                                messagebox.showerror("Fehler", "Kundenauswahl ist erforderlich")
                                 return
                             customer_name = customer_cb.get()
                             if customer_name not in self.app.customers:
-                                messagebox.showerror("Error", "Invalid customer")
+                                messagebox.showerror("Fehler", "Ungültiger Kunde")
                                 return
                             
                             # Calculate production date based on items
@@ -805,7 +819,7 @@ class WeeklyDeliveryView(WeeklyBaseView):
                             
                     elif update_type.get() == "future":
                         if not order_obj:
-                            messagebox.showerror("Error", "Cannot update future orders for a new order.")
+                            messagebox.showerror("Fehler", "Kann zukünftige Bestellungen für eine neue Bestellung nicht aktualisieren")
                             return
                         
                         # Find all subscription orders that are part of this subscription and in the future
@@ -846,11 +860,11 @@ class WeeklyDeliveryView(WeeklyBaseView):
                         if not order_obj:
                             # Need customer for new order
                             if customer_cb is None:
-                                messagebox.showerror("Error", "Customer selection is required.")
+                                messagebox.showerror("Fehler", "Kundenauswahl ist erforderlich")
                                 return
                             customer_name = customer_cb.get()
                             if customer_name not in self.app.customers:
-                                messagebox.showerror("Error", "Invalid customer")
+                                messagebox.showerror("Fehler", "Ungültiger Kunde")
                                 return
                             customer = self.app.customers[customer_name]
                         else:
@@ -898,12 +912,12 @@ class WeeklyDeliveryView(WeeklyBaseView):
                                         amount=amount
                                     )
                 
-                messagebox.showinfo("Success", "Order saved successfully!")
+                messagebox.showinfo("Erfolg", "Bestellung erfolgreich gespeichert!")
                 edit_window.destroy()
                 self.refresh()
                 
             except Exception as e:
-                messagebox.showerror("Error", f"An error occurred: {str(e)}")
+                messagebox.showerror("Fehler", f"Ein Fehler ist aufgetreten: {str(e)}")
         
         # Create buttons frame
         buttons_frame = ttk.Frame(edit_window)
@@ -920,9 +934,9 @@ class WeeklyDeliveryView(WeeklyBaseView):
         # --- Delete Order Button ---
         if order:
             def delete_order():
-                if messagebox.askyesno("Delete Order", "Are you sure you want to delete this order?"):
+                if messagebox.askyesno("Bestellung löschen", "Sind Sie sicher, dass Sie diese Bestellung löschen möchten?"):
                     order.delete_instance(recursive=True)  # Deletes the order and its related items
-                    messagebox.showinfo("Success", "Order deleted successfully!")
+                    messagebox.showinfo("Erfolg", "Bestellung erfolgreich gelöscht!")
                     edit_window.destroy()
                     self.refresh()
 
@@ -939,7 +953,7 @@ class WeeklyProductionView(WeeklyBaseView):
         production_data = get_production_plan(monday, end_of_week)
         
         # Group by day
-        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        days = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag']
 
         # Track if we have any items for each day, particularly Sunday
         day_has_items = {day: False for day in days}
@@ -961,8 +975,8 @@ class WeeklyProductionView(WeeklyBaseView):
             frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
             
             # Add headers
-            ttk.Label(frame, text="Item", font=('Arial', 12, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=5)
-            ttk.Label(frame, text="Amount", font=('Arial', 12, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=5)
+            ttk.Label(frame, text="Artikel", font=('Arial', 12, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=5)
+            ttk.Label(frame, text="Menge", font=('Arial', 12, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=5)
             
             # Add a separator
             separator = ttk.Separator(frame, orient='horizontal')
@@ -1002,7 +1016,7 @@ class WeeklyProductionView(WeeklyBaseView):
                 no_items_label.grid(row=2, column=0, columnspan=2, sticky='w', padx=5, pady=10)
                 
         # After processing all days, check if Sunday has no items consistently
-        if not day_has_items['Sunday']:
+        if not day_has_items['Sonntag']:
             # Check if there are any Sunday orders in the database
             # This is diagnostic code to help understand why Sundays might be empty
             today = datetime.now().date()
@@ -1011,9 +1025,9 @@ class WeeklyProductionView(WeeklyBaseView):
             
             if not list(sunday_check):
                 # If still no Sunday items, let's add a diagnostic message just for this view
-                sunday_frame = self.day_frames['Sunday']
+                sunday_frame = self.day_frames['Sonntag']
                 diagnostic_label = ttk.Label(sunday_frame, 
-                                           text="Note: No Sunday production data found in database", 
+                                           text="Hinweis: Keine Sonntagsproduktionsdaten in der Datenbank gefunden", 
                                            font=('Arial', 9), 
                                            foreground='red')
                 diagnostic_label.grid(row=3, column=0, columnspan=2, sticky='w', padx=5, pady=5)
@@ -1028,7 +1042,7 @@ class WeeklyTransferView(WeeklyBaseView):
         transfer_data = get_transfer_schedule(monday, end_of_week)
         
         # Group by day
-        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        days = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag']
 
         for i, day in enumerate(days):
             date = monday + timedelta(days=i)
@@ -1048,8 +1062,8 @@ class WeeklyTransferView(WeeklyBaseView):
             frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
             
             # Add headers
-            ttk.Label(frame, text="Item", font=('Arial', 12, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=5)
-            ttk.Label(frame, text="Amount", font=('Arial', 12, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=5)
+            ttk.Label(frame, text="Artikel", font=('Arial', 12, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=5)
+            ttk.Label(frame, text="Menge", font=('Arial', 12, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=5)
             
             # Add a separator
             separator = ttk.Separator(frame, orient='horizontal')

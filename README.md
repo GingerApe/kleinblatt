@@ -1,34 +1,71 @@
-# Your App Name
+# Kleinblatt - Microgreens Production Tracker
 
-Brief description of what your app does.
+Eine umfassende Anwendung zur Verwaltung von Microgreens-Produktion, Lieferplänen und Kundenbestellungen.
 
-## Features
-- Feature 1
-- Feature 2
-- Feature 3
+## Funktionen
+- Wöchentliche Ansichten für Lieferung, Produktion und Transfer
+- Kundenverwaltungssystem mit Bestellhistorie
+- Artikelverwaltung mit Wachstumsmetriken
+- Automatisierte Abonnementbestellungen
+- Druckfertige Wochenpläne für den täglichen Betrieb
+- Detaillierte Analysen zu Kunden- und Produktleistung
 
 ## Installation
 
-### Windows
-1. Download the latest installer (`YourAppName_Setup.exe`) from the [releases page](https://github.com/yourusername/yourrepo/releases)
-2. Double-click the installer
-3. Follow the installation wizard
-4. Launch the app from your Start Menu
+### Voraussetzungen
+- Python 3.7 oder höher
+- tkinter (für die GUI)
+- Die erforderlichen Python-Pakete
 
-### macOS
-1. Download the latest `.dmg` file from the [releases page](https://github.com/yourusername/yourrepo/releases)
-2. Double-click the `.dmg` file
-3. Drag the app to your Applications folder
-4. Launch from Applications
+### Installation der Abhängigkeiten
+```bash
+pip install -r requirements.txt
+```
 
-## Usage
-Explain how to use your app here.
+### Starten der Anwendung
+```bash
+python main.py
+```
 
-## Updates
-The app will automatically check for updates when launched. If an update is available, you'll be notified and directed to download the latest version.
+## Schnellstartanleitung
+1. **Artikelverwaltung**: Fügen Sie zuerst Ihre Produkte im "Items"-Tab mit ihren Wachstumszeiten und Preisen hinzu
+2. **Kunden hinzufügen**: Gehen Sie zum "Kunden"-Tab, um Ihre Kundeninformationen einzugeben
+3. **Bestellungen erstellen**: Erstellen Sie neue Bestellungen mit Lieferterminen und optionalen Abonnement-Einstellungen
+4. **Zeitpläne anzeigen**:
+   - Nutzen Sie den "Lieferung"-Tab, um bevorstehende Kundenlieferungen zu sehen
+   - Der "Produktion"-Tab zeigt, was wann gepflanzt werden muss
+   - Der "Transfer"-Tab hilft bei der Verfolgung, wann Produkte zwischen Wachstumsstadien verschoben werden müssen
+
+## Wochenansichten
+- Navigieren Sie zwischen den Wochen mit den Pfeilen oben in jeder Zeitplanansicht
+- Klicken Sie auf "Heute", um zur aktuellen Woche zurückzukehren
+- Verwenden Sie den "+"-Button in der Lieferansicht, um neue Bestellungen direkt für bestimmte Tage hinzuzufügen
+
+## Drucken von Zeitplänen
+Jede Zeitplanansicht enthält eine "Drucken"-Schaltfläche, die ein PDF des aktuellen Wochenzeitplans erzeugt. Die PDFs werden im "output"-Ordner gespeichert.
+
+## Datenbankstruktur
+Die Anwendung verwendet eine lokale SQLite-Datenbank zur Speicherung aller Daten. Die wichtigsten Tabellen sind:
+- `Customer`: Kundendaten
+- `Item`: Produkte/Microgreens mit Wachstumszeiten und Preisen
+- `Order`: Bestellungen mit Liefer- und Produktionsdaten
+- `OrderItem`: Verbindungstabelle zwischen Bestellungen und Artikeln
+
+## Entwicklung
+Dieses Projekt ist in Python mit tkinter für die GUI entwickelt. Es verwendet peewee als ORM für die Datenbankinteraktion und FPDF für die PDF-Generierung.
+
+### Projektstruktur
+- `main.py`: Hauptanwendung und GUI
+- `models.py`: Datenbankmodelle
+- `database.py`: Datenbankfunktionen
+- `weekly_view.py`: Wochenansichten für Lieferung, Produktion und Transfer
+- `customers_view.py`: Kundenverwaltung
+- `item_view.py`: Artikelverwaltung
+- `print_schedules.py`: PDF-Generierung für Zeitpläne
+- `widgets.py`: Benutzerdefinierte UI-Komponenten
+
+## Version
+Aktuelle Version: 0.9
 
 ## Support
-If you encounter any issues, please [create an issue](https://github.com/yourusername/yourrepo/issues) on GitHub.
-
-## License
-Specify your license here
+Bei Fragen oder Problemen wenden Sie sich bitte an it@kleinblatt.de
