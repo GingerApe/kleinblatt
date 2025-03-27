@@ -22,7 +22,7 @@ def import_old_data(csv_filepath):
     Import data from the old system's CSV file into the new database.
     
     CSV format:
-    Kunde;Item;Menge;Lieferdatum;Ansäen;Woche_Wdh;Von;Bis;...
+    "Kunde","Item","Menge","Lieferdatum","Ansaehen","Woche_Wdh","Von","Bis","Preis"
     """
     # First clean the database
     clean_database()
@@ -38,8 +38,8 @@ def import_old_data(csv_filepath):
     print(f"Reading data from {csv_filepath}...")
     try:
         with open(csv_filepath, 'r', encoding='utf-8') as csvfile:
-            # Use semicolon as delimiter
-            reader = csv.reader(csvfile, delimiter=';')
+            # Use comma as delimiter (new format)
+            reader = csv.reader(csvfile, delimiter=',', quotechar='"')
             
             # Skip header row
             next(reader)
@@ -70,9 +70,13 @@ def import_old_data(csv_filepath):
                         # Parse delivery date (column 3)
                         delivery_date_str = row[3].strip()
                         if delivery_date_str:
-                            delivery_date = datetime.strptime(delivery_date_str, '%d.%m.%y').date()
-                            if delivery_date.year < 2000:
-                                delivery_date = delivery_date.replace(year=delivery_date.year + 100)
+                            # Updated format to handle full year (YYYY) instead of YY
+                            if len(delivery_date_str) == 10:  # DD.MM.YYYY format
+                                delivery_date = datetime.strptime(delivery_date_str, '%d.%m.%Y').date()
+                            else:  # DD.MM.YY format
+                                delivery_date = datetime.strptime(delivery_date_str, '%d.%m.%y').date()
+                                if delivery_date.year < 2000:
+                                    delivery_date = delivery_date.replace(year=delivery_date.year + 100)
                         else:
                             print(f"Missing delivery date in row {row_count}: {row}")
                             continue
@@ -81,9 +85,12 @@ def import_old_data(csv_filepath):
                         production_date = None
                         production_date_str = row[4].strip() if len(row) > 4 else ""
                         if production_date_str:
-                            production_date = datetime.strptime(production_date_str, '%d.%m.%y').date()
-                            if production_date.year < 2000:
-                                production_date = production_date.replace(year=production_date.year + 100)
+                            if len(production_date_str) == 10:  # DD.MM.YYYY format
+                                production_date = datetime.strptime(production_date_str, '%d.%m.%Y').date()
+                            else:  # DD.MM.YY format
+                                production_date = datetime.strptime(production_date_str, '%d.%m.%y').date()
+                                if production_date.year < 2000:
+                                    production_date = production_date.replace(year=production_date.year + 100)
                         
                         # Parse subscription type (column 5)
                         subscription_type = 0
@@ -98,17 +105,23 @@ def import_old_data(csv_filepath):
                         from_date = None
                         if subscription_type > 0 and len(row) > 6 and row[6].strip():
                             from_date_str = row[6].strip()
-                            from_date = datetime.strptime(from_date_str, '%d.%m.%y').date()
-                            if from_date.year < 2000:
-                                from_date = from_date.replace(year=from_date.year + 100)
+                            if len(from_date_str) == 10:  # DD.MM.YYYY format
+                                from_date = datetime.strptime(from_date_str, '%d.%m.%Y').date()
+                            else:  # DD.MM.YY format
+                                from_date = datetime.strptime(from_date_str, '%d.%m.%y').date()
+                                if from_date.year < 2000:
+                                    from_date = from_date.replace(year=from_date.year + 100)
                         
                         # Parse to date for subscriptions (column 7)
                         to_date = None
                         if subscription_type > 0 and len(row) > 7 and row[7].strip():
                             to_date_str = row[7].strip()
-                            to_date = datetime.strptime(to_date_str, '%d.%m.%y').date()
-                            if to_date.year < 2000:
-                                to_date = to_date.replace(year=to_date.year + 100)
+                            if len(to_date_str) == 10:  # DD.MM.YYYY format
+                                to_date = datetime.strptime(to_date_str, '%d.%m.%Y').date()
+                            else:  # DD.MM.YY format
+                                to_date = datetime.strptime(to_date_str, '%d.%m.%y').date()
+                                if to_date.year < 2000:
+                                    to_date = to_date.replace(year=to_date.year + 100)
                         
                         # Debug output
                         print(f"Row {row_count}: Customer={customer_name}, Item={item_name}, Amount={amount}")
