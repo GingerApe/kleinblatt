@@ -31,7 +31,8 @@ def generate_subscription_orders(order):
     frequencies = {1: 7, 2: 14, 3: 21, 4: 28}
     delta = timedelta(days=frequencies[order.subscription_type])
     
-    current_date = order.from_date + delta
+    # Use delivery_date as the starting point, not from_date
+    current_date = order.delivery_date + delta
     orders = []
     
     while current_date <= order.to_date:

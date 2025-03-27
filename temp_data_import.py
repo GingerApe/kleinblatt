@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from models import Customer, Item, Order, OrderItem, db
 from database import calculate_production_date, generate_subscription_orders
 import uuid
+import sys
 
 def clean_database():
     """
@@ -70,13 +71,17 @@ def import_old_data(csv_filepath):
                         # Parse delivery date (column 3)
                         delivery_date_str = row[3].strip()
                         if delivery_date_str:
-                            # Updated format to handle full year (YYYY) instead of YY
-                            if len(delivery_date_str) == 10:  # DD.MM.YYYY format
+                            try:
+                                if len(delivery_date_str) == 10:  # DD.MM.YYYY format
+                                    delivery_date = datetime.strptime(delivery_date_str, '%d.%m.%Y').date()
+                                else:  # DD.MM.YY format
+                                    delivery_date = datetime.strptime(delivery_date_str, '%d.%m.%y').date()
+                                    # Adjust for centuries - assume 20xx for years < 50
+                                    if delivery_date.year < 2000:
+                                        delivery_date = delivery_date.replace(year=delivery_date.year + 100)
+                            except ValueError:
+                                # Try alternative format DD.MM.YYYY
                                 delivery_date = datetime.strptime(delivery_date_str, '%d.%m.%Y').date()
-                            else:  # DD.MM.YY format
-                                delivery_date = datetime.strptime(delivery_date_str, '%d.%m.%y').date()
-                                if delivery_date.year < 2000:
-                                    delivery_date = delivery_date.replace(year=delivery_date.year + 100)
                         else:
                             print(f"Missing delivery date in row {row_count}: {row}")
                             continue
@@ -85,12 +90,16 @@ def import_old_data(csv_filepath):
                         production_date = None
                         production_date_str = row[4].strip() if len(row) > 4 else ""
                         if production_date_str:
-                            if len(production_date_str) == 10:  # DD.MM.YYYY format
-                                production_date = datetime.strptime(production_date_str, '%d.%m.%Y').date()
-                            else:  # DD.MM.YY format
-                                production_date = datetime.strptime(production_date_str, '%d.%m.%y').date()
-                                if production_date.year < 2000:
-                                    production_date = production_date.replace(year=production_date.year + 100)
+                            try:
+                                if len(production_date_str) == 10:  # DD.MM.YYYY format
+                                    production_date = datetime.strptime(production_date_str, '%d.%m.%Y').date()
+                                else:  # DD.MM.YY format
+                                    production_date = datetime.strptime(production_date_str, '%d.%m.%y').date()
+                                    if production_date.year < 2000:
+                                        production_date = production_date.replace(year=production_date.year + 100)
+                            except ValueError:
+                                print(f"Invalid production date format in row {row_count}: {production_date_str}")
+                                # Not a critical error, will calculate later
                         
                         # Parse subscription type (column 5)
                         subscription_type = 0
@@ -105,23 +114,31 @@ def import_old_data(csv_filepath):
                         from_date = None
                         if subscription_type > 0 and len(row) > 6 and row[6].strip():
                             from_date_str = row[6].strip()
-                            if len(from_date_str) == 10:  # DD.MM.YYYY format
+                            try:
+                                if len(from_date_str) == 10:  # DD.MM.YYYY format
+                                    from_date = datetime.strptime(from_date_str, '%d.%m.%Y').date()
+                                else:  # DD.MM.YY format
+                                    from_date = datetime.strptime(from_date_str, '%d.%m.%y').date()
+                                    if from_date.year < 2000:
+                                        from_date = from_date.replace(year=from_date.year + 100)
+                            except ValueError:
+                                # Try alternative format
                                 from_date = datetime.strptime(from_date_str, '%d.%m.%Y').date()
-                            else:  # DD.MM.YY format
-                                from_date = datetime.strptime(from_date_str, '%d.%m.%y').date()
-                                if from_date.year < 2000:
-                                    from_date = from_date.replace(year=from_date.year + 100)
                         
                         # Parse to date for subscriptions (column 7)
                         to_date = None
                         if subscription_type > 0 and len(row) > 7 and row[7].strip():
                             to_date_str = row[7].strip()
-                            if len(to_date_str) == 10:  # DD.MM.YYYY format
+                            try:
+                                if len(to_date_str) == 10:  # DD.MM.YYYY format
+                                    to_date = datetime.strptime(to_date_str, '%d.%m.%Y').date()
+                                else:  # DD.MM.YY format
+                                    to_date = datetime.strptime(to_date_str, '%d.%m.%y').date()
+                                    if to_date.year < 2000:
+                                        to_date = to_date.replace(year=to_date.year + 100)
+                            except ValueError:
+                                # Try alternative format
                                 to_date = datetime.strptime(to_date_str, '%d.%m.%Y').date()
-                            else:  # DD.MM.YY format
-                                to_date = datetime.strptime(to_date_str, '%d.%m.%y').date()
-                                if to_date.year < 2000:
-                                    to_date = to_date.replace(year=to_date.year + 100)
                         
                         # Debug output
                         print(f"Row {row_count}: Customer={customer_name}, Item={item_name}, Amount={amount}")
@@ -192,20 +209,30 @@ def import_old_data(csv_filepath):
                         amount=amount
                     )
                     
-                    print(f"Imported: {customer_name} - {item_name} - {amount} - {delivery_date}")
-                
                 print(f"Imported {row_count} rows from CSV file.")
                 
                 # Now generate all subscription orders
                 print("Generating subscription orders...")
                 subscription_count = 0
+                total_subscription_orders = 0
+                
+                # Process each order that has a subscription type > 0
                 for order_key, order in order_keys.items():
-                    if order.subscription_type > 0:
-                        # This is a subscription order, generate future orders
-                        future_orders = generate_subscription_orders(order)
+                    if order.subscription_type > 0 and order.from_date and order.to_date:
+                        print(f"Processing subscription order: {order.customer.name}, delivery: {order.delivery_date}, type: {order.subscription_type}")
                         
-                        # Find all order items for this order
+                        # Get all items for this order
                         items = list(order.order_items)
+                        
+                        # Verify we have valid from/to dates
+                        if not order.from_date or not order.to_date:
+                            print(f"Warning: Missing from_date or to_date for subscription order {order.id}, customer: {order.customer.name}")
+                            continue
+                            
+                        # Generate future orders
+                        future_orders = generate_subscription_orders(order)
+                        print(f"Generated {len(future_orders)} future orders for {order.customer.name}")
+                        total_subscription_orders += len(future_orders)
                         
                         for future_order_data in future_orders:
                             future_order = Order.create(
@@ -222,18 +249,33 @@ def import_old_data(csv_filepath):
                                 )
                             subscription_count += 1
                 
-                print(f"Generated {subscription_count} subscription orders.")
-    
+                print(f"Generated {subscription_count} subscription orders out of {total_subscription_orders} expected.")
+                
+                # Count orders by delivery date to verify distribution
+                delivery_date_counts = {}
+                for order in Order.select():
+                    date_str = order.delivery_date.strftime('%Y-%m-%d')
+                    if date_str in delivery_date_counts:
+                        delivery_date_counts[date_str] += 1
+                    else:
+                        delivery_date_counts[date_str] = 1
+                
+                print("Orders by delivery date:")
+                for date_str, count in sorted(delivery_date_counts.items()):
+                    print(f"  {date_str}: {count} orders")
+                
         print("Import completed successfully!")
     except Exception as e:
         print(f"Error importing data: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     
     return True
 
 if __name__ == "__main__":
     # Provide the path to your CSV file
-    csv_path = "Orders.csv"
+    csv_path = "new_orders.csv"
     
     if import_old_data(csv_path):
         print("✅ Data migration completed successfully!")

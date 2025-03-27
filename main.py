@@ -541,94 +541,176 @@ class ProductionApp(tk.Tk):
                         return False, f"Ungültige Menge für Artikel {item_name}. Bitte geben Sie eine Zahl ein."
                 
                 with db.atomic():  # Use transaction to ensure all changes are saved or none
-                    # Loop through each order row to update/create orders and their items.
-                    for row in order_rows:
-                        delivery_date_str = row['delivery_entry'].get()
-                        try:
-                            delivery_date = datetime.strptime(delivery_date_str, "%d.%m.%Y").date()
-                        except ValueError:
-                            messagebox.showerror("Fehler", f"Ungültiges Datumsformat: {delivery_date_str}. Verwenden Sie dd.mm.yyyy.")
-                            return
+                    # Track if subscription type changed for any order
+                    subscription_type_changed = False
+                    subscription_type = None
+                    
+                    # First, delete any existing future orders that might need to be regenerated
+                    # (we'll regenerate them based on the new subscription settings)
+                    if subscription_orders and len(subscription_orders) > 0:
+                        reference_order = subscription_orders[0]
+                        old_subscription_type = reference_order.subscription_type
+                        today = datetime.now().date()
+                        
+                        # Store the customer and other details
+                        customer = reference_order.customer
+                        halbe_channel = reference_order.halbe_channel
+                        
+                        # Loop through each order row to update/create orders and their items.
+                        for row in order_rows:
+                            delivery_date_str = row['delivery_entry'].get()
+                            try:
+                                delivery_date = datetime.strptime(delivery_date_str, "%d.%m.%Y").date()
+                            except ValueError:
+                                messagebox.showerror("Fehler", f"Ungültiges Datumsformat: {delivery_date_str}. Verwenden Sie dd.mm.yyyy.")
+                                return
 
-                        existing_order = row['existing_order']
-                        
-                        # Gather item data first and validate
-                        order_items_data = []
-                        for item_row in row['items']:
-                            item_name = item_row['item_cb'].get()
+                            existing_order = row['existing_order']
                             
-                            # Use our validated amount validation function
-                            amount_str = item_row['amount_entry'].get().strip()
-                            valid, result = validate_amount(amount_str, item_name)
+                            # Gather item data first and validate
+                            order_items_data = []
+                            for item_row in row['items']:
+                                item_name = item_row['item_cb'].get()
+                                
+                                # Use our validated amount validation function
+                                amount_str = item_row['amount_entry'].get().strip()
+                                valid, result = validate_amount(amount_str, item_name)
+                                
+                                if not valid:
+                                    messagebox.showerror("Fehler", result)
+                                    return
+                                
+                                amount = result  # This is the validated float value
+                                
+                                if item_name not in self.items:
+                                    messagebox.showerror("Fehler", f"Ungültiger Artikel: {item_name}")
+                                    return
+                                
+                                order_items_data.append((item_name, amount))
                             
-                            if not valid:
-                                messagebox.showerror("Fehler", result)
-                                return
-                            
-                            amount = result  # This is the validated float value
-                            
-                            if item_name not in self.items:
-                                messagebox.showerror("Fehler", f"Ungültiger Artikel: {item_name}")
-                                return
-                            
-                            order_items_data.append((item_name, amount))
-                        
-                        if existing_order:
-                            # Update existing order
-                            existing_order.delivery_date = delivery_date
-                            existing_order.from_date = overall_from
-                            existing_order.to_date = overall_to
-                            existing_order.save()
-                            
-                            # Delete existing order items for this order
-                            for oi in existing_order.order_items:
-                                oi.delete_instance()
-                            
-                            # Create new order items
-                            for item_name, amount in order_items_data:
-                                OrderItem.create(
-                                    order=existing_order,
-                                    item=self.items[item_name],
-                                    amount=amount
-                                )
-                        else:
-                            # For a new order, we need a customer
-                            if subscription_orders:
-                                customer = subscription_orders[0].customer
-                                subscription_type = subscription_orders[0].subscription_type
-                                halbe_channel = subscription_orders[0].halbe_channel
+                            if existing_order:
+                                # Update existing order
+                                existing_order.delivery_date = delivery_date
+                                existing_order.from_date = overall_from
+                                existing_order.to_date = overall_to
+                                
+                                # Check if the subscription type has changed - we'll need to regenerate futures
+                                if old_subscription_type != subscription_type:
+                                    subscription_type_changed = True
+                                    
+                                # Save changes to the order
+                                existing_order.save()
+                                
+                                # Delete existing order items for this order
+                                for oi in existing_order.order_items:
+                                    oi.delete_instance()
+                                
+                                # Create new order items
+                                for item_name, amount in order_items_data:
+                                    OrderItem.create(
+                                        order=existing_order,
+                                        item=self.items[item_name],
+                                        amount=amount
+                                    )
+                                
+                                # Save the subscription type from the first order
+                                if subscription_type is None:
+                                    subscription_type = existing_order.subscription_type
                             else:
-                                messagebox.showerror("Fehler", "Kunde für neue Bestellung kann nicht bestimmt werden.")
-                                return
-                            
-                            # Calculate production date based on max days
-                            max_days = max(self.items[item_name].total_days for item_name, _ in order_items_data)
-                            production_date = delivery_date - timedelta(days=max_days)
-                            
-                            # Create new order
-                            new_order = Order.create(
-                                customer=customer,
-                                delivery_date=delivery_date,
-                                production_date=production_date,
-                                from_date=overall_from,
-                                to_date=overall_to,
-                                subscription_type=subscription_type,
-                                halbe_channel=halbe_channel,
-                                order_id=uuid.uuid4(),
-                                is_future=True
-                            )
-                            
-                            # Create order items
-                            for item_name, amount in order_items_data:
-                                OrderItem.create(
-                                    order=new_order,
-                                    item=self.items[item_name],
-                                    amount=amount
+                                # For a new order, we need a customer
+                                if subscription_orders:
+                                    if subscription_type is None:
+                                        subscription_type = subscription_orders[0].subscription_type
+                                else:
+                                    messagebox.showerror("Fehler", "Kunde für neue Bestellung kann nicht bestimmt werden.")
+                                    return
+                                
+                                # Calculate production date based on max days
+                                max_days = max(self.items[item_name].total_days for item_name, _ in order_items_data)
+                                production_date = delivery_date - timedelta(days=max_days)
+                                
+                                # Create new order
+                                new_order = Order.create(
+                                    customer=customer,
+                                    delivery_date=delivery_date,
+                                    production_date=production_date,
+                                    from_date=overall_from,
+                                    to_date=overall_to,
+                                    subscription_type=subscription_type,
+                                    halbe_channel=halbe_channel,
+                                    order_id=uuid.uuid4(),
+                                    is_future=True
                                 )
+                                
+                                # Create order items
+                                for item_name, amount in order_items_data:
+                                    OrderItem.create(
+                                        order=new_order,
+                                        item=self.items[item_name],
+                                        amount=amount
+                                    )
+                        
+                        # If subscription type changed, we need to regenerate all future orders
+                        # Delete all future orders excluding those we just edited
+                        if subscription_type_changed or old_subscription_type != subscription_type:
+                            edited_order_ids = [row['existing_order'].id for row in order_rows if row['existing_order']]
+                            
+                            # Delete future orders that weren't edited
+                            future_orders_to_delete = Order.select().where(
+                                (Order.from_date == overall_from) &
+                                (Order.to_date == overall_to) &
+                                (Order.customer == customer) &
+                                (Order.delivery_date > today) &
+                                ~(Order.id << edited_order_ids)
+                            )
+                            for order_to_delete in future_orders_to_delete:
+                                order_to_delete.delete_instance(recursive=True)
+                            
+                            # Find the earliest existing order to use as a template for regeneration
+                            base_order = Order.select().where(
+                                (Order.from_date == overall_from) &
+                                (Order.to_date == overall_to) &
+                                (Order.customer == customer)
+                            ).order_by(Order.delivery_date).first()
+                            
+                            if base_order:
+                                # Update the subscription type for the base order
+                                base_order.subscription_type = subscription_type
+                                base_order.save()
+                                
+                                # Generate new future orders with the updated subscription type
+                                future_orders = generate_subscription_orders(base_order)
+                                
+                                # Get all items from the base order
+                                base_items = list(base_order.order_items)
+                                
+                                # Create the new future orders with the same items
+                                for future_order_data in future_orders:
+                                    # Check if this date already exists in edited orders
+                                    delivery_date = future_order_data['delivery_date']
+                                    if not Order.select().where(
+                                        (Order.from_date == overall_from) &
+                                        (Order.to_date == overall_to) &
+                                        (Order.customer == customer) &
+                                        (Order.delivery_date == delivery_date)
+                                    ).exists():
+                                        future_order = Order.create(
+                                            **future_order_data,
+                                            order_id=uuid.uuid4()
+                                        )
+                                        
+                                        # Copy items from base order
+                                        for item_data in base_items:
+                                            OrderItem.create(
+                                                order=future_order,
+                                                item=item_data.item,
+                                                amount=item_data.amount
+                                            )
                 
                 messagebox.showinfo("Erfolg", "Bestellungen erfolgreich aktualisiert!")
                 edit_window.destroy()
                 self.on_customer_select(None)  # Refresh orders list
+                self.refresh_tables()  # Refresh all views
                 
             except Exception as e:
                 messagebox.showerror("Fehler", f"Ein Fehler ist aufgetreten: {str(e)}")
