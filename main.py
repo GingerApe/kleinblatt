@@ -12,6 +12,37 @@ from widgets import AutocompleteCombobox
 from print_schedules import SchedulePrinter, ask_week_selection
 import os
 
+# Function to check for production orders on Sundays
+def check_sunday_production():
+    """
+    Check if there are any orders scheduled for production on Sundays.
+    This is a diagnostic function to help understand why Sundays might 
+    not show up in the production plan.
+    """
+    try:
+        # Get all orders
+        all_orders = Order.select()
+        
+        # Filter for Sunday production dates
+        sunday_orders = [order for order in all_orders if order.production_date.weekday() == 6]  # 6 = Sunday
+        
+        if sunday_orders:
+            messagebox.showinfo(
+                "Sunday Production Found", 
+                f"Found {len(sunday_orders)} orders with Sunday production dates.\n" +
+                f"First example: Order ID {sunday_orders[0].id}, " +
+                f"Production Date: {sunday_orders[0].production_date}, " +
+                f"Customer: {sunday_orders[0].customer.name}"
+            )
+        else:
+            messagebox.showinfo(
+                "No Sunday Production", 
+                "No orders with Sunday production dates were found in the database.\n" +
+                "This explains why no production entries appear on Sundays."
+            )
+    except Exception as e:
+        messagebox.showerror("Error", f"Error checking Sunday production: {str(e)}")
+
 class ProductionApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -720,6 +751,22 @@ class ProductionApp(tk.Tk):
             max_days = max(item['item'].total_days for item in self.order_items)
             production_date = delivery_date - timedelta(days=max_days)
             
+            # Confirm with user if production date falls on Sunday
+            if production_date.weekday() == 6:  # 6 = Sunday
+                use_sunday = messagebox.askyesnocancel(
+                    "Sunday Production",
+                    f"This order's production date falls on a Sunday ({production_date.strftime('%d.%m.%Y')}).\n\n"
+                    "Yes: Keep Sunday as production date\n"
+                    "No: Move to Saturday instead\n"
+                    "Cancel: Abort saving the order"
+                )
+                
+                if use_sunday is None:  # User clicked Cancel
+                    return
+                    
+                if use_sunday is False:  # User clicked No, move to Saturday
+                    production_date = production_date - timedelta(days=1)
+            
             with db.atomic():
                 # Create order
                 order = Order.create(
@@ -799,6 +846,10 @@ class ProductionApp(tk.Tk):
         
         ttk.Button(print_frame, text="Print Production Plan",
                 command=lambda: self.print_single_schedule("production")).pack(side='right')
+        
+        # Add diagnostic button for Sunday production check
+        ttk.Button(print_frame, text="Check Sunday Production",
+                command=check_sunday_production).pack(side='left', padx=5)
         
         self.production_view = WeeklyProductionView(self.tab3)
 

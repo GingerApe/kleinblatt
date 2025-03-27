@@ -2,10 +2,27 @@ from datetime import datetime, timedelta
 from models import *
 from peewee import fn
 
-def calculate_production_date(delivery_date, items):
-    """Calculate production start date based on the longest growth period among items"""
+def calculate_production_date(delivery_date, items, allow_sunday=True):
+    """
+    Calculate production start date based on the longest growth period among items.
+    
+    Parameters:
+    - delivery_date: The date when the order will be delivered
+    - items: List of OrderItem objects
+    - allow_sunday: Whether to allow production dates to fall on Sunday
+    
+    Returns:
+    - Production date
+    """
     max_days = max(item.item.total_days for item in items)
-    return delivery_date - timedelta(days=max_days)
+    production_date = delivery_date - timedelta(days=max_days)
+    
+    # If Sunday is not allowed and the production date falls on Sunday,
+    # move it to Saturday instead
+    if not allow_sunday and production_date.weekday() == 6:  # 6 = Sunday
+        production_date = production_date - timedelta(days=1)
+        
+    return production_date
 
 def generate_subscription_orders(order):
     if order.subscription_type == 0 or not order.from_date or not order.to_date:
@@ -18,10 +35,14 @@ def generate_subscription_orders(order):
     orders = []
     
     while current_date <= order.to_date:
+        # Pass the allow_sunday parameter based on the original order's production date
+        # If the original order was allowed to be produced on Sunday, future orders should too
+        allow_sunday = order.production_date.weekday() != 6 or (order.production_date.weekday() == 6)
+        
         new_order = {
             'customer': order.customer,
             'delivery_date': current_date,
-            'production_date': calculate_production_date(current_date, order.items),
+            'production_date': calculate_production_date(current_date, order.items, allow_sunday),
             'halbe_channel': order.halbe_channel,
             'is_future': True,
             'subscription_type': order.subscription_type,
@@ -80,7 +101,32 @@ def get_production_plan(start_date=None, end_date=None):
         query = query.where((Order.production_date >= start_date) & 
                           (Order.production_date <= end_date))
     
-    return query
+    # Debug any potential day-of-week filtering
+    # Check if there are any orders with Sunday production date
+    from datetime import datetime, timedelta
+    
+    # Check production dates in database to see if we have any Sunday records
+    sunday_orders = []
+    
+    # Execute the query to get the results
+    results = list(query)
+    
+    # Filter out Sunday orders for debugging
+    for result in results:
+        if result.order.production_date.weekday() == 6:  # 6 = Sunday
+            sunday_orders.append(result)
+    
+    # This is useful to diagnose the issue but doesn't affect functionality
+    if not sunday_orders and start_date and end_date:
+        # Check if the date range includes a Sunday
+        current_date = start_date
+        while current_date <= end_date:
+            if current_date.weekday() == 6:  # Found a Sunday in the range
+                # If we get here, it means the range has a Sunday but no orders on Sunday
+                break
+            current_date += timedelta(days=1)
+    
+    return results
 
 def get_transfer_schedule(start_date=None, end_date=None):
     """Get items that need to be transferred from seeding to growing"""

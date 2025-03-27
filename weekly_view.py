@@ -941,6 +941,9 @@ class WeeklyProductionView(WeeklyBaseView):
         # Group by day
         days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
+        # Track if we have any items for each day, particularly Sunday
+        day_has_items = {day: False for day in days}
+
         for i, day in enumerate(days):
             date = monday + timedelta(days=i)
             date_str = date.strftime('%d.%m')
@@ -970,6 +973,7 @@ class WeeklyProductionView(WeeklyBaseView):
             for prod in production_data:
                 if prod.order.production_date.weekday() == i:
                     day_production.append(prod)
+                    day_has_items[day] = True
             
             # Sort items alphabetically for better organization
             day_production.sort(key=lambda x: x.item.name)
@@ -991,6 +995,28 @@ class WeeklyProductionView(WeeklyBaseView):
                     item_separator = ttk.Separator(frame, orient='horizontal')
                     item_separator.grid(row=row_index, column=0, columnspan=2, sticky='ew', padx=15, pady=2)
                     row_index += 1
+            
+            # If no items for this day, add a message (especially for Sunday)
+            if not day_production:
+                no_items_label = ttk.Label(frame, text="No production items", font=('Arial', 10, 'italic'))
+                no_items_label.grid(row=2, column=0, columnspan=2, sticky='w', padx=5, pady=10)
+                
+        # After processing all days, check if Sunday has no items consistently
+        if not day_has_items['Sunday']:
+            # Check if there are any Sunday orders in the database
+            # This is diagnostic code to help understand why Sundays might be empty
+            today = datetime.now().date()
+            sunday_check_date = today - timedelta(days=today.weekday()) + timedelta(days=6)  # Next Sunday
+            sunday_check = get_production_plan(sunday_check_date, sunday_check_date)
+            
+            if not list(sunday_check):
+                # If still no Sunday items, let's add a diagnostic message just for this view
+                sunday_frame = self.day_frames['Sunday']
+                diagnostic_label = ttk.Label(sunday_frame, 
+                                           text="Note: No Sunday production data found in database", 
+                                           font=('Arial', 9), 
+                                           foreground='red')
+                diagnostic_label.grid(row=3, column=0, columnspan=2, sticky='w', padx=5, pady=5)
                     
 class WeeklyTransferView(WeeklyBaseView):
     def refresh(self):
