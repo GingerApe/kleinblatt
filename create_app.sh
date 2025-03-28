@@ -3,8 +3,13 @@
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# Extract version from main.py
+VERSION=$(grep "VERSION =" "$SCRIPT_DIR/main.py" | sed 's/VERSION = "\(.*\)"/\1/')
+echo "Creating Kleinblatt app version $VERSION"
+
 # Make sure the launch script is executable
 chmod +x "$SCRIPT_DIR/launch_kleinblatt.sh"
+chmod +x "$SCRIPT_DIR/update_kleinblatt.sh"
 
 # Create a temporary directory for our app
 TEMP_DIR=$(mktemp -d)
@@ -32,7 +37,7 @@ cat > "$TEMP_DIR/Kleinblatt.app/Contents/Info.plist" << EOL
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.9</string>
+	<string>$VERSION</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>
@@ -69,5 +74,5 @@ mv "$TEMP_DIR/Kleinblatt.app" "$SCRIPT_DIR/"
 # Clean up
 rm -rf "$TEMP_DIR"
 
-echo "Kleinblatt.app created successfully!"
+echo "Kleinblatt.app version $VERSION created successfully!"
 echo "You can now double-click Kleinblatt.app to run the application." 

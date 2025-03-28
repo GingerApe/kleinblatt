@@ -11,23 +11,44 @@ from item_view import ItemView
 from widgets import AutocompleteCombobox
 from print_schedules import SchedulePrinter, ask_week_selection
 import os
+import requests
+import re
+import sys
+import subprocess
 
 # Check for updates
 VERSION = "0.9"
+
 def check_for_updates():
     try:
-        # Replace with your actual repo URL
-        response = requests.get("https://github.com/GingerApe/kleinblatt.git")
-        latest_version = response.json()["tag_name"]
-        
-        if latest_version > VERSION:
-            print(f"New version {latest_version} available!")
-            print("Please download the latest version from: ")
-            print("https://github.com/GingerApe/kleinblatt.git")
-            return True
-    except:
-        pass
-    return False
+        # Get latest release info from GitHub API
+        response = requests.get("https://api.github.com/repos/GingerApe/kleinblatt/releases/latest")
+        if response.status_code == 200:
+            latest_version = response.json().get("tag_name", "").strip("v")
+            
+            # Compare versions
+            if latest_version and latest_version > VERSION:
+                update_choice = messagebox.askyesno(
+                    "Update Available", 
+                    f"New version {latest_version} available! (Current: {VERSION})\n\n"
+                    f"Would you like to update now?")
+                
+                if update_choice:
+                    try:
+                        # Run the update script which will pull latest code
+                        update_script = "./update_kleinblatt.sh"
+                        subprocess.run([update_script], check=True)
+                        messagebox.showinfo("Update Successful", 
+                                           "Kleinblatt has been updated successfully!\n"
+                                           "Please restart the application.")
+                        sys.exit(0)
+                    except Exception as e:
+                        messagebox.showerror("Update Failed", 
+                                            f"Could not update automatically. Please update manually:\n{str(e)}")
+        return False
+    except Exception as e:
+        print(f"Update check failed: {str(e)}")
+        return False
 
 class ProductionApp(tk.Tk):
     def __init__(self):
