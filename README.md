@@ -15,6 +15,7 @@ Eine umfassende Anwendung zur Verwaltung von Microgreens-Produktion, Lieferplän
 ### Voraussetzungen
 - Python 3.7 oder höher
 - tkinter (für die GUI)
+- ttkbootstrap (für erweiterte GUI-Styling-Optionen)
 - Die erforderlichen Python-Pakete
 
 ### Installation der Abhängigkeiten
