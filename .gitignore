@@ -1,5 +1,6 @@
 # eigene Einträge
 init_database.py
+kb/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -14,7 +15,6 @@ trash/
 .Python
 env/
 venv/
-kb/
 build/
 develop-eggs/
 dist/

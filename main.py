@@ -15,9 +15,20 @@ import requests
 import re
 import sys
 import subprocess
+import json
+import copy
 
 # Check for updates
 VERSION = "0.9"
+
+# Define action types for undo system
+ACTION_CREATE_ORDER = "create_order"
+ACTION_DELETE_ORDER = "delete_order"
+ACTION_EDIT_ORDER = "edit_order"
+ACTION_CREATE_CUSTOMER = "create_customer"
+ACTION_EDIT_CUSTOMER = "edit_customer"
+ACTION_CREATE_ITEM = "create_item"
+ACTION_EDIT_ITEM = "edit_item"
 
 def check_for_updates():
     try:
@@ -58,9 +69,26 @@ class ProductionApp(tk.Tk):
         
         self.db = db
         self.printer = SchedulePrinter()
-
+        
+        # Initialize undo history stack
+        self.undo_stack = []
+        self.undo_pointer = -1
+        self.max_undo_steps = 20  # Limit the number of undo actions
+        
         style = ttk.Style()
         style.configure('Green.TFrame', background='green')
+
+        # Create toolbar frame
+        self.toolbar = ttk.Frame(self)
+        self.toolbar.pack(fill='x', pady=5, padx=10)
+        
+        # Create undo button
+        self.undo_button = ttk.Button(self.toolbar, text="Rückgängig (Ctrl+Z)", command=self.undo_last_action)
+        self.undo_button.pack(side='left', padx=5)
+        self.undo_button.config(state='disabled')  # Initially disabled until there are actions
+        
+        # Create undo keyboard shortcut
+        self.bind('<Control-z>', lambda event: self.undo_last_action())
 
         # Create main notebook
         self.notebook = ttk.Notebook(self)
@@ -99,9 +127,517 @@ class ProductionApp(tk.Tk):
         if hasattr(self, 'transfer_view'):
             self.transfer_view.refresh()
 
+    # Undo system methods
+    def record_action(self, action_type, old_data=None, new_data=None, description=None):
+        """Record an action for potential undo"""
+        # Debug print to see what's being recorded
+        print(f"Recording action: {action_type}, Description: {description}")
+        
+        # Remove any actions that were undone
+        if self.undo_pointer < len(self.undo_stack) - 1:
+            self.undo_stack = self.undo_stack[:self.undo_pointer + 1]
+            
+        # Add the new action
+        self.undo_stack.append({
+            'type': action_type,
+            'old_data': old_data,
+            'new_data': new_data,
+            'description': description or f"Action: {action_type}"
+        })
+        
+        # Limit the stack size
+        if len(self.undo_stack) > self.max_undo_steps:
+            self.undo_stack.pop(0)
+        
+        self.undo_pointer = len(self.undo_stack) - 1
+        self.undo_button.config(state='normal')
+        print(f"Undo stack now has {len(self.undo_stack)} entries, pointer at {self.undo_pointer}")
+    
+    def undo_last_action(self):
+        """Undo the last recorded action"""
+        if not self.undo_stack or self.undo_pointer < 0:
+            self.undo_button.config(state='disabled')
+            return
+            
+        action = self.undo_stack[self.undo_pointer]
+        print(f"Undoing action: {action['type']}, {action['description']}")
+        
+        try:
+            if action['type'] == ACTION_CREATE_ORDER:
+                # Undo order creation by deleting the order
+                if action['new_data'] and 'order_id' in action['new_data']:
+                    order_id = action['new_data']['order_id']
+                    
+                    # Find and delete all orders with this order_id or related to the same subscription
+                    orders = Order.select().where(Order.order_id == order_id)
+                    if orders.exists():
+                        # Get the first order to find related subscription orders
+                        main_order = orders.get()
+                        if main_order.from_date and main_order.to_date and main_order.subscription_type > 0:
+                            # This is a subscription order, get all related orders
+                            with db.atomic():
+                                Order.delete().where(
+                                    (Order.from_date == main_order.from_date) &
+                                    (Order.to_date == main_order.to_date) &
+                                    (Order.customer == main_order.customer)
+                                ).execute()
+                        else:
+                            # Single order
+                            with db.atomic():
+                                Order.delete().where(Order.order_id == order_id).execute()
+                            
+                        messagebox.showinfo("Rückgängig", "Bestellerstellung rückgängig gemacht")
+                
+            elif action['type'] == ACTION_DELETE_ORDER:
+                # Undo order deletion by recreating the order
+                if action['old_data']:
+                    print(f"Restoring deleted order from data: {type(action['old_data'])}")
+                    self.recreate_order_from_data(action['old_data'])
+                    messagebox.showinfo("Rückgängig", "Bestelllöschung rückgängig gemacht")
+                
+            elif action['type'] == ACTION_EDIT_ORDER:
+                # Undo order edit by restoring the previous state
+                if action['old_data']:
+                    print(f"Restoring previous order state from data: {type(action['old_data'])}")
+                    
+                    if isinstance(action['old_data'], dict) and action['old_data'].get('order_id'):
+                        # Single order edit (from delivery tab)
+                        print("Restoring single order from delivery tab")
+                        
+                        # Check if the order still exists
+                        order_id = action['old_data']['order_id']
+                        existing_order = Order.get_or_none(Order.order_id == order_id)
+                        
+                        if existing_order:
+                            print(f"Found existing order with ID {order_id}, updating it")
+                            self.restore_order_from_data(action['old_data'])
+                        else:
+                            print(f"Order with ID {order_id} doesn't exist, recreating it")
+                            self.recreate_order_from_data(action['old_data'])
+                            
+                    elif isinstance(action['old_data'], dict) and 'orders' in action['old_data']:
+                        # Multiple orders edit (from order management)
+                        print(f"Restoring multiple orders ({len(action['old_data']['orders'])}) from orders tab")
+                        self.restore_order_from_data(action['old_data'])
+                    else:
+                        print(f"Unknown order data format for undo: {type(action['old_data'])}")
+                        
+                    messagebox.showinfo("Rückgängig", "Bestelländerung rückgängig gemacht")
+                    
+            elif action['type'] == ACTION_CREATE_CUSTOMER:
+                # Undo customer creation
+                if action['new_data'] and 'customer_id' in action['new_data']:
+                    customer = Customer.get_or_none(Customer.id == action['new_data']['customer_id'])
+                    if customer:
+                        customer.delete_instance(recursive=True)
+                        messagebox.showinfo("Rückgängig", "Kundenerstellung rückgängig gemacht")
+                        
+            elif action['type'] == ACTION_EDIT_CUSTOMER:
+                # Undo customer edit
+                if action['old_data'] and 'customer_id' in action['old_data']:
+                    customer = Customer.get_or_none(Customer.id == action['old_data']['customer_id'])
+                    if customer:
+                        for key, value in action['old_data'].items():
+                            if key != 'customer_id':
+                                setattr(customer, key, value)
+                        customer.save()
+                        messagebox.showinfo("Rückgängig", "Kundenänderung rückgängig gemacht")
+                        
+            elif action['type'] == ACTION_CREATE_ITEM:
+                # Undo item creation
+                if action['new_data'] and 'item_id' in action['new_data']:
+                    item = Item.get_or_none(Item.id == action['new_data']['item_id'])
+                    if item:
+                        item.delete_instance(recursive=True)
+                        messagebox.showinfo("Rückgängig", "Artikelerstellung rückgängig gemacht")
+                        
+            elif action['type'] == ACTION_EDIT_ITEM:
+                # Undo item edit
+                if action['old_data'] and 'item_id' in action['old_data']:
+                    item = Item.get_or_none(Item.id == action['old_data']['item_id'])
+                    if item:
+                        for key, value in action['old_data'].items():
+                            if key != 'item_id':
+                                setattr(item, key, value)
+                        item.save()
+                        messagebox.showinfo("Rückgängig", "Artikeländerung rückgängig gemacht")
+            
+            # Update UI after undo
+            self.load_data()
+            self.refresh_all_tables()  # Use our comprehensive refresh method
+            
+            # Update current customer view if open
+            if hasattr(self, 'on_customer_select'):
+                selected_customers = self.customer_tree.selection() if hasattr(self, 'customer_tree') else None
+                if selected_customers:
+                    self.on_customer_select(None)
+            
+            # Updating undo stack pointer
+            self.undo_pointer -= 1
+            if self.undo_pointer < 0:
+                self.undo_button.config(state='disabled')
+                
+        except Exception as e:
+            print(f"Undo error: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Undo Error", f"Fehler beim Rückgängigmachen: {str(e)}")
+    
+    def recreate_order_from_data(self, order_data):
+        """Recreate an order from stored data"""
+        with db.atomic():
+            # Check if we have a batch of orders to restore
+            if 'orders' in order_data:
+                # Multiple orders
+                for order in order_data['orders']:
+                    self.recreate_order_from_data(order)
+                return
+                
+            # Main order data
+            order_items = order_data.pop('order_items', [])
+            
+            # Make a copy of the data to avoid modifying the original
+            order_dict = order_data.copy()
+            
+            # Remove the 'id' field to avoid unique constraint violations
+            if 'id' in order_dict:
+                order_dict.pop('id')
+            
+            # Handle date fields explicitly
+            for field in ['delivery_date', 'production_date', 'from_date', 'to_date']:
+                if field in order_dict and isinstance(order_dict[field], str):
+                    try:
+                        order_dict[field] = datetime.strptime(order_dict[field], '%Y-%m-%d').date()
+                    except (ValueError, TypeError):
+                        # If conversion fails, remove the field
+                        order_dict.pop(field, None)
+            
+            try:
+                # Check if order with this order_id already exists
+                order_id = order_dict.get('order_id')
+                existing_order = Order.get_or_none(Order.order_id == order_id)
+                
+                if existing_order:
+                    # Update existing order instead of creating a new one
+                    for key, value in order_dict.items():
+                        if key != 'order_id' and hasattr(existing_order, key):
+                            setattr(existing_order, key, value)
+                    existing_order.save()
+                    order = existing_order
+                    
+                    # Delete existing items
+                    OrderItem.delete().where(OrderItem.order == order).execute()
+                else:
+                    # Create new order
+                    order = Order.create(**order_dict)
+                
+                # Recreate order items
+                for item_data in order_items:
+                    item = Item.get(Item.id == item_data['item_id'])
+                    OrderItem.create(
+                        order=order,
+                        item=item,
+                        amount=item_data['amount']
+                    )
+            except Exception as e:
+                print(f"Error recreating order: {str(e)}")
+                print(f"Order data: {order_dict}")
+                raise
+    
+    def restore_order_from_data(self, order_data):
+        """Restore an order to its previous state"""
+        with db.atomic():
+            # Check if we have a batch of orders to restore
+            if 'orders' in order_data:
+                # Multiple orders - could be from subscription edit
+                print(f"Restoring {len(order_data['orders'])} orders from a subscription edit")
+                
+                # First determine what orders currently exist vs what needs to be recreated
+                orders_to_update = {}
+                orders_to_create = []
+                
+                for orig_order in order_data['orders']:
+                    # Ensure order_id is properly formatted for comparison
+                    orig_order_id = orig_order.get('order_id')
+                    if orig_order_id:
+                        # Convert to string if it's a UUID object
+                        if isinstance(orig_order_id, uuid.UUID):
+                            orig_order_id = str(orig_order_id)
+                        orig_order['order_id'] = orig_order_id
+                    
+                    # Check if this order still exists
+                    existing_order = None
+                    if orig_order_id:
+                        existing_order = Order.get_or_none(Order.order_id == orig_order_id)
+                    
+                    if existing_order:
+                        # Add to update dictionary
+                        orders_to_update[orig_order_id] = {
+                            'order': existing_order,
+                            'data': orig_order
+                        }
+                    else:
+                        # Before creating a new order, check if there's already an order with the same:
+                        # - customer
+                        # - delivery_date 
+                        # - from_date/to_date
+                        # This would indicate an order that was edited and we should update it instead of creating a new one
+                        if 'delivery_date' in orig_order and 'customer_id' in orig_order:
+                            delivery_date = orig_order['delivery_date']
+                            if isinstance(delivery_date, str):
+                                delivery_date = datetime.strptime(delivery_date, '%Y-%m-%d').date()
+                            
+                            from_date = orig_order.get('from_date')
+                            if isinstance(from_date, str):
+                                from_date = datetime.strptime(from_date, '%Y-%m-%d').date()
+                                
+                            to_date = orig_order.get('to_date')
+                            if isinstance(to_date, str):
+                                to_date = datetime.strptime(to_date, '%Y-%m-%d').date()
+                            
+                            # Try to find an existing order with matching parameters
+                            try:
+                                customer = Customer.get_by_id(orig_order['customer_id'])
+                                matching_order = Order.get_or_none(
+                                    (Order.customer == customer) &
+                                    (Order.delivery_date == delivery_date) &
+                                    (Order.from_date == from_date) &
+                                    (Order.to_date == to_date)
+                                )
+                                
+                                if matching_order:
+                                    # Found a matching order, update it instead of creating a new one
+                                    print(f"Found matching order with ID {matching_order.order_id} for date {delivery_date}, updating instead of creating new")
+                                    orders_to_update[orig_order_id] = {
+                                        'order': matching_order,
+                                        'data': orig_order
+                                    }
+                                    continue
+                            except Exception as e:
+                                print(f"Error finding matching order: {str(e)}")
+                        
+                        # If no matching order found, add to create list
+                        orders_to_create.append(orig_order)
+                
+                # Delete any FUTURE orders that aren't in the original data
+                # This prevents accidentally deleting past orders
+                if len(orders_to_update) > 0:
+                    # Get a sample order to find subscription details
+                    sample_order_data = list(orders_to_update.values())[0]['data']
+                    sample_order = list(orders_to_update.values())[0]['order']
+                    
+                    # Find original subscription parameters
+                    original_from_date = sample_order_data.get('from_date')
+                    original_to_date = sample_order_data.get('to_date')
+                    original_customer_id = sample_order_data.get('customer_id')
+                    
+                    if original_from_date and original_to_date and original_customer_id:
+                        # Format dates if they're strings
+                        if isinstance(original_from_date, str):
+                            original_from_date = datetime.strptime(original_from_date, '%Y-%m-%d').date()
+                        if isinstance(original_to_date, str):
+                            original_to_date = datetime.strptime(original_to_date, '%Y-%m-%d').date()
+                        
+                        # Get current date to ensure we only remove future orders
+                        today = datetime.now().date()
+                        
+                        # Get all FUTURE orders in the subscription
+                        customer = Customer.get_by_id(original_customer_id)
+                        current_subscription_orders = Order.select().where(
+                            (Order.from_date == sample_order.from_date) &
+                            (Order.to_date == sample_order.to_date) &
+                            (Order.customer == customer) &
+                            (Order.delivery_date >= today)  # CRITICAL: Only consider future orders
+                        )
+                        
+                        # Find orders that aren't in the original data
+                        # Convert all order IDs to strings for consistent comparison
+                        original_order_ids = [str(od['order_id']) for od in order_data['orders']]
+                        
+                        # Get delivery dates from original orders for comparison
+                        original_delivery_dates = {}
+                        for od in order_data['orders']:
+                            if 'delivery_date' in od:
+                                # Convert to date object if it's a string
+                                if isinstance(od['delivery_date'], str):
+                                    delivery_date = datetime.strptime(od['delivery_date'], '%Y-%m-%d').date()
+                                else:
+                                    delivery_date = od['delivery_date']
+                                original_delivery_dates[str(od['order_id'])] = delivery_date
+                        
+                        for current_order in current_subscription_orders:
+                            order_id_str = str(current_order.order_id)
+                            
+                            # Only delete if this order doesn't exist in original data
+                            # AND it's not a past order that was recreated with a new ID
+                            if order_id_str not in original_order_ids:
+                                # Also check if there's a corresponding delivery date match
+                                date_match_found = False
+                                for orig_id, orig_date in original_delivery_dates.items():
+                                    if orig_date == current_order.delivery_date:
+                                        date_match_found = True
+                                        break
+                                        
+                                if not date_match_found:
+                                    # Delete this order as it wasn't in the original subscription
+                                    print(f"Deleting future order {current_order.id} that wasn't in original subscription (delivery date: {current_order.delivery_date})")
+                                    current_order.delete_instance(recursive=True)
+                
+                # Update existing orders
+                for order_info in orders_to_update.values():
+                    order = order_info['order']
+                    data = order_info['data']
+                    
+                    # Make a copy to avoid modifying the original
+                    order_dict = data.copy()
+                    order_items = order_dict.pop('order_items', [])
+                    
+                    # Remove id to avoid conflicts
+                    order_dict.pop('id', None)
+                    
+                    # Handle date fields
+                    for field in ['delivery_date', 'production_date', 'from_date', 'to_date']:
+                        if field in order_dict and isinstance(order_dict[field], str):
+                            try:
+                                order_dict[field] = datetime.strptime(order_dict[field], '%Y-%m-%d').date()
+                            except (ValueError, TypeError):
+                                pass
+                    
+                    # Update order fields
+                    for key, value in order_dict.items():
+                        if key != 'order_id' and key != 'id' and hasattr(order, key):
+                            setattr(order, key, value)
+                    order.save()
+                    
+                    # Delete existing items and recreate them
+                    OrderItem.delete().where(OrderItem.order == order).execute()
+                    
+                    # Recreate order items
+                    for item_data in order_items:
+                        item = Item.get(Item.id == item_data['item_id'])
+                        OrderItem.create(
+                            order=order,
+                            item=item,
+                            amount=item_data['amount']
+                        )
+                
+                # Create orders that no longer exist
+                for order_data in orders_to_create:
+                    self.recreate_order_from_data(order_data)
+                
+                return
+                
+            # Single order restoration logic
+            # Ensure order_id is a string
+            if 'order_id' in order_data and not isinstance(order_data['order_id'], str):
+                order_data['order_id'] = str(order_data['order_id'])
+                
+            # Get the order
+            order = Order.get_or_none(Order.order_id == order_data['order_id'])
+            if not order:
+                # Check if there's an order with the same delivery date and customer
+                if 'delivery_date' in order_data and 'customer_id' in order_data:
+                    delivery_date = order_data['delivery_date']
+                    if isinstance(delivery_date, str):
+                        delivery_date = datetime.strptime(delivery_date, '%Y-%m-%d').date()
+                    
+                    try:
+                        customer = Customer.get_by_id(order_data['customer_id'])
+                        matching_order = Order.get_or_none(
+                            (Order.customer == customer) &
+                            (Order.delivery_date == delivery_date)
+                        )
+                        
+                        if matching_order:
+                            # Found a matching order, update it instead of creating a new one
+                            print(f"Found matching order with ID {matching_order.order_id} for customer {customer.id} and date {delivery_date}")
+                            order = matching_order
+                    except Exception as e:
+                        print(f"Error finding matching order: {str(e)}")
+                
+                # If still no order found, recreate it
+                if not order:
+                    return self.recreate_order_from_data(order_data)
+                
+            # Make a copy to avoid modifying the original
+            order_dict = order_data.copy()
+            order_items = order_dict.pop('order_items', [])
+            
+            # Remove id to avoid conflicts
+            order_dict.pop('id', None)
+            
+            # Handle date fields explicitly
+            for field in ['delivery_date', 'production_date', 'from_date', 'to_date']:
+                if field in order_dict and isinstance(order_dict[field], str):
+                    try:
+                        order_dict[field] = datetime.strptime(order_dict[field], '%Y-%m-%d').date()
+                    except (ValueError, TypeError):
+                        # If conversion fails, keep the original value
+                        pass
+            
+            # Update main order data
+            try:
+                for key, value in order_dict.items():
+                    if key != 'order_id' and key != 'id' and hasattr(order, key):
+                        setattr(order, key, value)
+                order.save()
+                
+                # Delete existing items
+                OrderItem.delete().where(OrderItem.order == order).execute()
+                
+                # Recreate order items
+                for item_data in order_items:
+                    item = Item.get(Item.id == item_data['item_id'])
+                    OrderItem.create(
+                        order=order,
+                        item=item,
+                        amount=item_data['amount']
+                    )
+            except Exception as e:
+                print(f"Error restoring order: {str(e)}")
+                print(f"Order data: {order_dict}")
+                raise
+
+    def serialize_order(self, order):
+        """Serialize an order instance for the undo system"""
+        order_data = {
+            'id': order.id,
+            'order_id': str(order.order_id),  # Convert UUID to string
+            'customer_id': order.customer.id,
+            'delivery_date': order.delivery_date,
+            'production_date': order.production_date,
+            'from_date': order.from_date,
+            'to_date': order.to_date,
+            'subscription_type': order.subscription_type,
+            'halbe_channel': order.halbe_channel,
+            'is_future': order.is_future,
+            'order_items': []
+        }
+        
+        # Convert date objects to strings
+        for key, value in order_data.items():
+            if isinstance(value, date):
+                order_data[key] = value.strftime('%Y-%m-%d')
+            elif isinstance(value, uuid.UUID):
+                order_data[key] = str(value)
+        
+        # Add order items
+        for item in order.order_items:
+            order_data['order_items'].append({
+                'id': item.id,
+                'item_id': item.item.id,
+                'amount': item.amount
+            })
+        
+        return order_data
+
+    def collect_orders_data(self, orders):
+        """Collect data for multiple orders for the undo system"""
+        return [self.serialize_order(order) for order in orders]
+
     # Add this method
     def create_items_tab(self):
-        self.item_view = ItemView(self.tab6)
+        self.item_view = ItemView(self.tab6, self)
     
     def load_customers(self):
         # Clear existing data
@@ -331,6 +867,10 @@ class ProductionApp(tk.Tk):
             subscription_orders = list(Order.select().where(
                 (Order.from_date == from_date_val) & (Order.to_date == to_date_val)
             ))
+            
+            # Store the original state for undo
+            original_orders_data = self.collect_orders_data(subscription_orders)
+            
         except Order.DoesNotExist:
             messagebox.showerror("Error", "The selected order does not exist.")
             return
@@ -473,27 +1013,88 @@ class ProductionApp(tk.Tk):
                             return
                         
                         with db.atomic():  # Transaction to ensure all operations succeed or fail together
+                            # First record the action for undo
                             if choice:  # Yes - Delete only this order
+                                # Store the order data before deletion
+                                order_data = self.serialize_order(existing_order)
+                                self.record_action(
+                                    ACTION_DELETE_ORDER,
+                                    order_data,
+                                    None,
+                                    "Löschung einer Bestellung"
+                                )
+                                
                                 existing_order.delete_instance(recursive=True)
                                 messagebox.showinfo("Erfolg", "Bestellung erfolgreich gelöscht!")
                             else:  # No - Delete this and all future orders
                                 today = datetime.now().date()
-                                future_orders = list(Order.select().where(
-                                    (Order.from_date == existing_order.from_date) &
-                                    (Order.to_date == existing_order.to_date) &
-                                    (Order.delivery_date >= today)
-                                ))
                                 
-                                # Delete all future orders (including this one)
-                                deleted_count = 0
-                                for future_order in future_orders:
-                                    future_order.delete_instance(recursive=True)
-                                    deleted_count += 1
+                                # Get the items in this order to compare with other orders
+                                current_order_items = set()
+                                for order_item in existing_order.order_items:
+                                    current_order_items.add(order_item.item.id)
                                 
-                                messagebox.showinfo("Erfolg", f"{deleted_count} Bestellungen erfolgreich gelöscht!")
+                                # Get weekday of the current order
+                                current_weekday = existing_order.delivery_date.weekday()
+                                
+                                # Display confirmation dialog with more details
+                                if messagebox.askokcancel("Bestätigen", 
+                                    f"Sind Sie sicher, dass Sie diese Lieferung und alle zukünftigen Lieferungen für {existing_order.customer.name} am gleichen Wochentag löschen möchten?\n\n"
+                                    f"Es werden nur Bestellungen mit identischen Artikeln gelöscht."):
+                                    
+                                    # First get all future orders for the same customer on same weekday
+                                    future_orders_query = Order.select().where(
+                                        (Order.customer == existing_order.customer) &
+                                        (Order.delivery_date >= today)
+                                    )
+                                    
+                                    # Filter for same weekday and same items
+                                    matching_orders = []
+                                    
+                                    for order in future_orders_query:
+                                        # Check if same weekday
+                                        if order.delivery_date.weekday() != current_weekday:
+                                            continue
+                                            
+                                        # Check if has the same items
+                                        order_items = set()
+                                        for order_item in order.order_items:
+                                            order_items.add(order_item.item.id)
+                                            
+                                        # Only include if items match exactly (same count and same IDs)
+                                        if order_items == current_order_items:
+                                            matching_orders.append(order)
+                                    
+                                    # Store all the order data before deletion
+                                    deleted_orders_data = self.collect_orders_data(matching_orders)
+                                    self.record_action(
+                                        ACTION_DELETE_ORDER,
+                                        {'orders': deleted_orders_data},
+                                        None,
+                                        f"Löschung von {len(matching_orders)} Bestellungen"
+                                    )
+                                    
+                                    # Delete the matching orders
+                                    deleted_count = 0
+                                    for future_order in matching_orders:
+                                        future_order.delete_instance(recursive=True)
+                                        deleted_count += 1
+                                    
+                                    messagebox.showinfo("Erfolg", f"{deleted_count} Bestellungen erfolgreich gelöscht!")
+                                else:
+                                    return  # User cancelled the deletion
                     else:
                         # Not a subscription order, simple confirmation
                         if messagebox.askyesno("Bestätigen", "Diese Bestellung löschen?"):
+                            # Store the order data before deletion
+                            order_data = self.serialize_order(existing_order)
+                            self.record_action(
+                                ACTION_DELETE_ORDER,
+                                order_data,
+                                None,
+                                "Löschung einer Bestellung"
+                            )
+                            
                             existing_order.delete_instance(recursive=True)
                             messagebox.showinfo("Erfolg", "Bestellung erfolgreich gelöscht!")
                     
@@ -562,6 +1163,9 @@ class ProductionApp(tk.Tk):
                         return False, f"Ungültige Menge für Artikel {item_name}. Bitte geben Sie eine Zahl ein."
                 
                 with db.atomic():  # Use transaction to ensure all changes are saved or none
+                    # Track edited and new orders for the undo system
+                    edited_orders = []
+                    
                     # Track if subscription type changed for any order
                     subscription_type_changed = False
                     subscription_type = None
@@ -610,6 +1214,10 @@ class ProductionApp(tk.Tk):
                                 order_items_data.append((item_name, amount))
                             
                             if existing_order:
+                                # Store the original order state for undo
+                                original_order_data = self.serialize_order(existing_order)
+                                edited_orders.append(original_order_data)
+                                
                                 # Update existing order
                                 existing_order.delivery_date = delivery_date
                                 existing_order.from_date = overall_from
@@ -650,7 +1258,7 @@ class ProductionApp(tk.Tk):
                                 max_days = max(self.items[item_name].total_days for item_name, _ in order_items_data)
                                 production_date = delivery_date - timedelta(days=max_days)
                                 
-                                # Create new order
+                                # Create new order - make sure to use a unique order_id
                                 new_order = Order.create(
                                     customer=customer,
                                     delivery_date=delivery_date,
@@ -676,7 +1284,7 @@ class ProductionApp(tk.Tk):
                         if subscription_type_changed or old_subscription_type != subscription_type:
                             edited_order_ids = [row['existing_order'].id for row in order_rows if row['existing_order']]
                             
-                            # Delete future orders that weren't edited
+                            # Store original data for orders that will be deleted
                             future_orders_to_delete = Order.select().where(
                                 (Order.from_date == overall_from) &
                                 (Order.to_date == overall_to) &
@@ -684,7 +1292,10 @@ class ProductionApp(tk.Tk):
                                 (Order.delivery_date > today) &
                                 ~(Order.id << edited_order_ids)
                             )
+                            
+                            # Save data for undo
                             for order_to_delete in future_orders_to_delete:
+                                edited_orders.append(self.serialize_order(order_to_delete))
                                 order_to_delete.delete_instance(recursive=True)
                             
                             # Find the earliest existing order to use as a template for regeneration
@@ -727,6 +1338,14 @@ class ProductionApp(tk.Tk):
                                                 item=item_data.item,
                                                 amount=item_data.amount
                                             )
+                
+                # Record action for undo after successful save
+                self.record_action(
+                    ACTION_EDIT_ORDER,
+                    {'orders': original_orders_data},
+                    {'orders': edited_orders},  # Add the edited orders data as new_data
+                    "Änderung von Bestellungen"
+                )
                 
                 messagebox.showinfo("Erfolg", "Bestellungen erfolgreich aktualisiert!")
                 edit_window.destroy()
@@ -1106,7 +1725,12 @@ class ProductionApp(tk.Tk):
                 if use_sunday is False:  # User clicked No, move to Saturday
                     production_date = production_date - timedelta(days=1)
             
+            created_orders = []
+            
             with db.atomic():
+                # Generate a unique order_id
+                order_id = uuid.uuid4()
+                
                 # Create order
                 order = Order.create(
                     customer=customer,
@@ -1116,9 +1740,10 @@ class ProductionApp(tk.Tk):
                     to_date=self.get_date_from_entry(self.to_date) if self.sub_var.get() else None,
                     subscription_type=self.sub_var.get(),
                     halbe_channel=self.halbe_var.get(),
-                    order_id=uuid.uuid4(),
+                    order_id=order_id,
                     is_future=False
                 )
+                created_orders.append(order)
                 
                 # Create order items
                 for item_data in self.order_items:
@@ -1136,6 +1761,7 @@ class ProductionApp(tk.Tk):
                             **future_order_data,
                             order_id=uuid.uuid4()
                         )
+                        created_orders.append(future_order)
                         # Copy items to future order
                         for item_data in self.order_items:
                             OrderItem.create(
@@ -1143,6 +1769,14 @@ class ProductionApp(tk.Tk):
                                 item=item_data['item'],
                                 amount=item_data['amount']
                             )
+            
+            # Record action for undo
+            self.record_action(
+                ACTION_CREATE_ORDER,
+                None,  # No old data for creation
+                {'order_id': order_id, 'count': len(created_orders)},
+                f"Erstellung von {len(created_orders)} Bestellungen"
+            )
             
             messagebox.showinfo("Erfolg", "Bestellung erfolgreich gespeichert!")
             self.clear_form()
@@ -1177,6 +1811,20 @@ class ProductionApp(tk.Tk):
         
         # Pass self (the ProductionApp instance) to WeeklyDeliveryView
         self.delivery_view = WeeklyDeliveryView(self.tab2, self, self.db)
+        
+        # Set up callbacks to enable undo
+        def delivery_on_edit_order(order_data, new_data):
+            # This will be called when an order is edited in the delivery tab
+            print("Order edited in delivery tab, recording for undo")
+            self.record_action(
+                ACTION_EDIT_ORDER,
+                order_data,  # Original order data
+                new_data,    # New order data
+                "Änderung von Bestellung in Lieferungsplan"
+            )
+        
+        # Attach the callback
+        self.delivery_view.set_edit_callback(delivery_on_edit_order)
     
     def create_production_tab(self):
         # Create print button frame
@@ -1199,7 +1847,7 @@ class ProductionApp(tk.Tk):
         self.transfer_view = WeeklyTransferView(self.tab4)
     
     def create_customers_tab(self):
-        self.customer_view = CustomerView(self.tab5)
+        self.customer_view = CustomerView(self.tab5, self)
     
     def refresh_tables(self):
         """Refresh all weekly views"""
@@ -1262,6 +1910,34 @@ class ProductionApp(tk.Tk):
                     os.system(f'xdg-open "{filepath}"')
         except Exception as e:
             messagebox.showwarning("Warnung", f"PDF wurde erstellt, konnte aber nicht automatisch geöffnet werden: {filepath}")
+
+    def refresh_all_tables(self):
+        """Comprehensive refresh of all UI components"""
+        # Refresh schedule views
+        if hasattr(self, 'delivery_view'):
+            self.delivery_view.refresh()
+        if hasattr(self, 'production_view'):
+            self.production_view.refresh()
+        if hasattr(self, 'transfer_view'):
+            self.transfer_view.refresh()
+            
+        # Refresh customers views
+        if hasattr(self, 'customer_view'):
+            self.customer_view.refresh_customer_list()
+        
+        # Refresh items view
+        if hasattr(self, 'item_view'):
+            self.item_view.refresh_item_list()
+            
+        # Refresh order metrics
+        if hasattr(self, 'load_customers'):
+            self.load_customers()
+            
+        # Refresh any order list
+        if hasattr(self, 'on_customer_select'):
+            selected_customers = self.customer_tree.selection() if hasattr(self, 'customer_tree') else None
+            if selected_customers:
+                self.on_customer_select(None)
 
 if __name__ == "__main__":
     check_for_updates()

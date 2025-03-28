@@ -198,6 +198,7 @@ class WeeklyDeliveryView(WeeklyBaseView):
         self.app = app  # Reference to the ProductionApp instance
         self.new_order_widgets = {}  # Will hold new order widgets for each day
         self.db = db
+        self.edit_callback = None  # Callback for notifying app of edits
 
         # Define a custom style for clickable labels using ttkbootstrap
         style = ttkb.Style('darkly')
@@ -216,6 +217,13 @@ class WeeklyDeliveryView(WeeklyBaseView):
         for day, frame in self.day_frames.items():
             add_order_button = ttk.Button(frame, text="+", command=lambda day=day: self.open_new_order_window(day))
             add_order_button.pack(side='top', anchor='ne', padx=5, pady=5)
+
+    def set_edit_callback(self, callback):
+        """Set a callback function to be called when an order is edited
+        The callback should accept two arguments: old_data and new_data
+        """
+        self.edit_callback = callback
+        print("Edit callback set in WeeklyDeliveryView")
 
     def open_new_order_window(self, day):
         """Open a new window to create an order for the specified day."""
@@ -562,6 +570,34 @@ class WeeklyDeliveryView(WeeklyBaseView):
         The delivery_date is pre-set; if prefill_customer is provided (for new orders), that value pre-fills the customer field.
         Now handles subscription editing and updates all related future orders.
         """
+        # Store original order data for undo if editing
+        original_order_data = None
+        original_future_orders_data = []
+        
+        if order and hasattr(self.app, 'serialize_order'):
+            try:
+                # Save the current order data
+                original_order_data = self.app.serialize_order(order)
+                print(f"Original order data saved for undo: Order ID {order.id}")
+                
+                # Also save data for all related future orders if they exist
+                if order.from_date and order.to_date and order.subscription_type > 0:
+                    # Find all future orders in this subscription (excluding the current order)
+                    today = datetime.now().date()
+                    future_orders = list(Order.select().where(
+                        (Order.from_date == order.from_date) &
+                        (Order.to_date == order.to_date) &
+                        (Order.customer == order.customer) &
+                        (Order.delivery_date > order.delivery_date)
+                    ))
+                    
+                    if future_orders:
+                        # Serialize all the future orders
+                        original_future_orders_data = self.app.collect_orders_data(future_orders)
+                        print(f"Also saved {len(original_future_orders_data)} future orders for undo")
+            except Exception as e:
+                print(f"Error serializing order data: {str(e)}")
+        
         edit_window = tk.Toplevel(self.parent)
         if order:
             edit_window.title(f"Edit Order for {order.customer.name} on {order.delivery_date.strftime('%d.%m.%Y')}")
@@ -931,6 +967,48 @@ class WeeklyDeliveryView(WeeklyBaseView):
                                # ... (code to create future OrderItems) ...
 
 
+                # After successful save, notify the app for undo history if editing an existing order
+                if order and self.edit_callback:
+                    try:
+                        # For edited orders, get the updated data
+                        updated_order_data = self.app.serialize_order(order)
+                        
+                        # Check which scope was selected
+                        scope = update_type.get()
+                        
+                        if scope == "current":
+                            # Single order edit - just send the original and updated order data
+                            print(f"Calling edit callback for single order {order.id}")
+                            self.edit_callback(original_order_data, updated_order_data)
+                        else:  # scope == "future"
+                            # Multiple orders edit - send original order + future orders, and updated versions
+                            print(f"Calling edit callback for order {order.id} plus future orders")
+                            
+                            # Combine the original order and future orders into a single undo record
+                            combined_original_data = {
+                                'orders': [original_order_data] + original_future_orders_data
+                            }
+                            
+                            # Get all current orders in the subscription after our changes
+                            current_subscription_orders = list(Order.select().where(
+                                (Order.from_date == order.from_date) &
+                                (Order.to_date == order.to_date) &
+                                (Order.customer == order.customer)
+                            ))
+                            
+                            # Serialize the current state of all these orders
+                            updated_subscription_data = self.app.collect_orders_data(current_subscription_orders)
+                            combined_updated_data = {
+                                'orders': updated_subscription_data
+                            }
+                            
+                            # Send both the original and updated data to the callback
+                            self.edit_callback(combined_original_data, combined_updated_data)
+                    except Exception as e:
+                        print(f"Error in edit callback: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                
                 messagebox.showinfo("Erfolg", "Bestellung erfolgreich gespeichert!")
                 edit_window.destroy()
                 self.refresh() # Refresh the current view
@@ -961,30 +1039,71 @@ class WeeklyDeliveryView(WeeklyBaseView):
                 if scope == "current":
                     confirm_msg = "Sind Sie sicher, dass Sie diese einzelne Bestellung löschen möchten?"
                 else:  # scope == "future"
-                    confirm_msg = "Sind Sie sicher, dass Sie diese Bestellung und alle zukünftigen Bestellungen in diesem Abonnement löschen möchten?"
+                    confirm_msg = "Sind Sie sicher, dass Sie diese Bestellung und alle zukünftigen Bestellungen mit identischen Artikeln löschen möchten?"
                 
                 if messagebox.askyesno("Bestellung löschen", confirm_msg):
                     with self.db.atomic():  # Use transaction to ensure all operations succeed or fail together
                         if scope == "current":
+                            # Store the order for undo
+                            if hasattr(self.app, 'record_action') and hasattr(self.app, 'serialize_order'):
+                                order_data = self.app.serialize_order(order)
+                                self.app.record_action(
+                                    "delete_order",
+                                    order_data,
+                                    None,
+                                    "Löschung einer Bestellung"
+                                )
+                            
                             # Delete only this order
                             order.delete_instance(recursive=True)  # Deletes the order and its related items
                             messagebox.showinfo("Erfolg", "Bestellung erfolgreich gelöscht!")
                         else:  # scope == "future"
-                            # Delete this order and all future orders in the subscription
-                            from_date = order.from_date
-                            to_date = order.to_date
-                            current_date = order.delivery_date
+                            # Get the weekday and items of the current order for matching
+                            current_weekday = order.delivery_date.weekday()
                             
-                            # Find all future orders (including current one)
-                            future_orders = list(Order.select().where(
-                                (Order.from_date == from_date) &
-                                (Order.to_date == to_date) &
-                                (Order.delivery_date >= current_date)
-                            ))
+                            # Get the items in this order to compare with other orders
+                            current_order_items = set()
+                            for order_item in order.order_items:
+                                current_order_items.add(order_item.item.id)
+                                
+                            # Get current date
+                            today = datetime.now().date()
+                            
+                            # Find all future orders with same customer, same weekday, and future dates
+                            future_orders_query = Order.select().where(
+                                (Order.customer == order.customer) &
+                                (Order.delivery_date >= today)
+                            )
+                            
+                            # Filter for same weekday and identical items
+                            matching_orders = []
+                            for future_order in future_orders_query:
+                                # Check if same weekday
+                                if future_order.delivery_date.weekday() != current_weekday:
+                                    continue
+                                
+                                # Check if the order has identical items
+                                order_items = set()
+                                for order_item in future_order.order_items:
+                                    order_items.add(order_item.item.id)
+                                
+                                # Only include if items match exactly (same set of IDs)
+                                if order_items == current_order_items:
+                                    matching_orders.append(future_order)
+                            
+                            # Store for undo
+                            if hasattr(self.app, 'record_action') and hasattr(self.app, 'collect_orders_data'):
+                                deleted_orders_data = self.app.collect_orders_data(matching_orders)
+                                self.app.record_action(
+                                    "delete_order",
+                                    {'orders': deleted_orders_data},
+                                    None,
+                                    f"Löschung von {len(matching_orders)} Bestellungen"
+                                )
                             
                             # Delete all selected orders
                             deleted_count = 0
-                            for future_order in future_orders:
+                            for future_order in matching_orders:
                                 future_order.delete_instance(recursive=True)
                                 deleted_count += 1
                                 
@@ -1036,59 +1155,41 @@ class WeeklyProductionView(WeeklyBaseView):
                 no_items_label.pack(padx=5, pady=10, anchor='w')
                 continue
                 
-            # Group by customer
-            customers_production = {}
-            for prod in day_production:
-                try:
-                    customer_name = prod.order.customer.name
-                except:
-                    # Handle case where customer doesn't exist
-                    customer_name = "Unknown Customer"
-                
-                if customer_name not in customers_production:
-                    customers_production[customer_name] = []
-                customers_production[customer_name].append(prod)
-            
-            # Get sorted list of customer names
-            sorted_customers = sorted(customers_production.keys(), key=str.lower)
-            
-            # Create a scrollable container for all customer data
+            # Create a main container frame for items
             main_container = ttk.Frame(frame)
             main_container.pack(fill='both', expand=True)
             
-            # Add each customer section
-            for customer_name in sorted_customers:
-                # Create a labeled frame for each customer
-                customer_frame = ttk.LabelFrame(main_container, text=customer_name)
-                customer_frame.pack(fill='x', expand=True, padx=5, pady=5)
+            # Create a frame for all items
+            items_frame = ttk.Frame(main_container)
+            items_frame.pack(fill='x', expand=True, padx=5, pady=5)
+            
+            # Configure grid columns for item layout
+            items_frame.columnconfigure(0, weight=1, minsize=100)  # Item column
+            items_frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
+            
+            # Add headers
+            ttk.Label(items_frame, text="Artikel", font=('Arial', 11, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=3)
+            ttk.Label(items_frame, text="Menge", font=('Arial', 11, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=3)
+            
+            # Add separator
+            separator = ttk.Separator(items_frame, orient='horizontal')
+            separator.grid(row=1, column=0, columnspan=2, sticky='ew', padx=3, pady=2)
+            
+            # Sort items alphabetically by name
+            sorted_items = sorted(day_production, key=lambda x: x.item.name.lower())
+            
+            # Add each production item in a grid layout
+            row_index = 2  # Start after header and separator
+            for prod in sorted_items:
+                # Item name
+                item_label = ttk.Label(items_frame, text=prod.item.name, font=('Arial', 10))
+                item_label.grid(row=row_index, column=0, sticky='w', padx=5, pady=2)
                 
-                # Configure grid columns for item layout
-                customer_frame.columnconfigure(0, weight=1, minsize=100)  # Item column
-                customer_frame.columnconfigure(1, weight=0, minsize=70)   # Amount column
+                # Amount with right alignment
+                amount_label = ttk.Label(items_frame, text=f"{prod.total_amount:.1f}", font=('Arial', 10))
+                amount_label.grid(row=row_index, column=1, sticky='e', padx=5, pady=2)
                 
-                # Add headers
-                ttk.Label(customer_frame, text="Artikel", font=('Arial', 11, 'bold')).grid(row=0, column=0, sticky='w', padx=5, pady=3)
-                ttk.Label(customer_frame, text="Menge", font=('Arial', 11, 'bold')).grid(row=0, column=1, sticky='e', padx=5, pady=3)
-                
-                # Add separator
-                separator = ttk.Separator(customer_frame, orient='horizontal')
-                separator.grid(row=1, column=0, columnspan=2, sticky='ew', padx=3, pady=2)
-                
-                # Sort items alphabetically within customer
-                customer_items = sorted(customers_production[customer_name], key=lambda x: x.item.name.lower())
-                
-                # Add each production item in a grid layout
-                row_index = 2  # Start after header and separator
-                for prod in customer_items:
-                    # Item name
-                    item_label = ttk.Label(customer_frame, text=prod.item.name, font=('Arial', 10))
-                    item_label.grid(row=row_index, column=0, sticky='w', padx=5, pady=2)
-                    
-                    # Amount with right alignment
-                    amount_label = ttk.Label(customer_frame, text=f"{prod.total_amount:.1f}", font=('Arial', 10))
-                    amount_label.grid(row=row_index, column=1, sticky='e', padx=5, pady=2)
-                    
-                    row_index += 1
+                row_index += 1
             
         # After processing all days, check if Sunday has no items consistently
         if not day_has_items['Sonntag']:

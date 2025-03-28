@@ -5,8 +5,9 @@ from models import Item
 from datetime import datetime
 
 class ItemView:
-    def __init__(self, parent):
+    def __init__(self, parent, app=None):
         self.parent = parent
+        self.app = app  # Store reference to main app for undo system
         self.edit_mode = False
         self.current_item = None
         self.create_widgets()
@@ -147,6 +148,18 @@ class ItemView:
 
         try:
             if self.edit_mode and self.current_item:
+                # Store original data for undo
+                original_data = {
+                    'item_id': self.current_item.id,
+                    'name': self.current_item.name,
+                    'seed_quantity': self.current_item.seed_quantity,
+                    'soaking_days': self.current_item.soaking_days,
+                    'germination_days': self.current_item.germination_days,
+                    'growth_days': self.current_item.growth_days,
+                    'price': self.current_item.price,
+                    'substrate': self.current_item.substrate
+                }
+                
                 # Update existing item
                 self.current_item.name = name
                 self.current_item.seed_quantity = seed_qty
@@ -156,10 +169,20 @@ class ItemView:
                 self.current_item.price = price
                 self.current_item.substrate = substrate
                 self.current_item.save()
+                
+                # Record action for undo if app reference exists
+                if self.app:
+                    self.app.record_action(
+                        "edit_item",
+                        original_data,
+                        {'item_id': self.current_item.id},
+                        f"Änderung von Artikel: {name}"
+                    )
+                
                 messagebox.showinfo("Erfolg", "Artikel erfolgreich aktualisiert")
             else:
                 # Create new item
-                Item.create(
+                item = Item.create(
                     name=name,
                     seed_quantity=seed_qty,
                     soaking_days=soaking_days,
@@ -168,6 +191,16 @@ class ItemView:
                     price=price,
                     substrate=substrate
                 )
+                
+                # Record action for undo if app reference exists
+                if self.app:
+                    self.app.record_action(
+                        "create_item",
+                        None,  # No old data for creation
+                        {'item_id': item.id},
+                        f"Erstellung von Artikel: {name}"
+                    )
+                
                 messagebox.showinfo("Erfolg", "Artikel erfolgreich hinzugefügt")
 
             self.cancel_edit()
@@ -230,5 +263,28 @@ class ItemView:
         if messagebox.askyesno("Bestätigung", "Sind Sie sicher, dass Sie diesen Artikel löschen möchten?"):
             item_id = self.tree.item(selected_item[0])['values'][0]
             item = Item.get_by_id(item_id)
+            
+            # Store original data for undo
+            original_data = {
+                'item_id': item.id,
+                'name': item.name,
+                'seed_quantity': item.seed_quantity,
+                'soaking_days': item.soaking_days,
+                'germination_days': item.germination_days,
+                'growth_days': item.growth_days,
+                'price': item.price,
+                'substrate': item.substrate
+            }
+            
             item.delete_instance()
+            
+            # Record action for undo if app reference exists
+            if self.app:
+                self.app.record_action(
+                    "delete_item",
+                    original_data,
+                    None,
+                    f"Löschung von Artikel: {item.name}"
+                )
+            
             self.refresh_item_list()

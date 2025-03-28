@@ -3,10 +3,14 @@ from tkinter import messagebox, ttk
 import tkinter as tk
 from widgets import AutocompleteCombobox
 from database import Customer
+from models import Order, OrderItem, Item, db
+from peewee import fn, JOIN
+from datetime import datetime
 
 class CustomerView:
-    def __init__(self, parent):
+    def __init__(self, parent, app=None):
         self.parent = parent
+        self.app = app  # Store reference to main app for undo system
         self.edit_mode = False
         self.current_customer = None
         self.create_widgets()
@@ -74,13 +78,40 @@ class CustomerView:
 
         try:
             if self.edit_mode and self.current_customer:
+                # Store original data for undo
+                original_data = {
+                    'customer_id': self.current_customer.id,
+                    'name': self.current_customer.name,
+                    'created_at': self.current_customer.created_at
+                }
+                
                 # Update existing customer
                 self.current_customer.name = name
                 self.current_customer.save()
+                
+                # Record action for undo if app reference exists
+                if self.app:
+                    self.app.record_action(
+                        "edit_customer",
+                        original_data,
+                        {'customer_id': self.current_customer.id},
+                        f"Änderung von Kunde: {name}"
+                    )
+                
                 messagebox.showinfo("Success", "Customer updated successfully")
             else:
                 # Create new customer
-                Customer.create(name=name)
+                customer = Customer.create(name=name)
+                
+                # Record action for undo if app reference exists
+                if self.app:
+                    self.app.record_action(
+                        "create_customer",
+                        None,  # No old data for creation
+                        {'customer_id': customer.id},
+                        f"Erstellung von Kunde: {name}"
+                    )
+                
                 messagebox.showinfo("Success", "Customer added successfully")
 
             self.cancel_edit()
@@ -135,7 +166,17 @@ class CustomerView:
                 return
             
             try:
-                Customer.create(name=name)
+                customer = Customer.create(name=name)
+                
+                # Record action for undo if app reference exists
+                if self.app:
+                    self.app.record_action(
+                        "create_customer",
+                        None,  # No old data for creation
+                        {'customer_id': customer.id},
+                        f"Erstellung von Kunde: {name}"
+                    )
+                
                 messagebox.showinfo("Success", "Customer added successfully", parent=popup)
                 popup.destroy()
                 self.refresh_customer_list()
@@ -169,5 +210,29 @@ class CustomerView:
         if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this customer?"):
             customer_id = self.tree.item(selected_item[0])['values'][0]
             customer = Customer.get_by_id(customer_id)
+            
+            # Check if customer has orders
+            order_count = Order.select().where(Order.customer == customer).count()
+            if order_count > 0:
+                messagebox.showerror("Error", f"Cannot delete customer with {order_count} orders")
+                return
+            
+            # Store original data for undo
+            original_data = {
+                'customer_id': customer.id,
+                'name': customer.name,
+                'created_at': customer.created_at
+            }
+            
             customer.delete_instance()
+            
+            # Record action for undo if app reference exists
+            if self.app:
+                self.app.record_action(
+                    "delete_customer",
+                    original_data,
+                    None,
+                    f"Löschung von Kunde: {customer.name}"
+                )
+            
             self.refresh_customer_list()
