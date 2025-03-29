@@ -1,11 +1,12 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
-from database import get_delivery_schedule, get_production_plan, get_transfer_schedule, generate_subscription_orders  # Ensure this import is present
+from database import get_delivery_schedule, get_production_plan, get_transfer_schedule, generate_subscription_orders, calculate_production_date  # Ensure this import is present
 from models import Order, OrderItem
 from widgets import AutocompleteCombobox
 import ttkbootstrap as ttkb
 import uuid
+import time
 
 class WeeklyBaseView:
     def __init__(self, parent):
@@ -525,7 +526,21 @@ class WeeklyDeliveryView(WeeklyBaseView):
             if day in self.canvases:
                 self.canvases[day].update_idletasks()
                 self.canvases[day].configure(scrollregion=self.canvases[day].bbox("all"))
-                                
+        
+        # After refreshing delivery view, request refreshes for other views
+        self.refresh_other_views()
+        
+    def refresh_other_views(self):
+        """Tell the main app to refresh production and transfer views"""
+        # Only refresh other views if we have an app reference
+        if hasattr(self, 'app') and self.app is not None:
+            # Use the throttled refresh mechanism if available
+            if hasattr(self.app, 'throttled_refresh'):
+                self.app.throttled_refresh()
+            else:
+                # Fallback to the old method if throttled_refresh isn't available
+                self.app.after(100, self.app.refresh_tables)
+
     def create_or_update_new_order_widget(self, day):
         frame = self.day_frames[day]
         if day not in self.new_order_widgets:
@@ -845,8 +860,6 @@ class WeeklyDeliveryView(WeeklyBaseView):
                     
                     order_items_data.append((item_name, amount))
                 
-                # << HIER NEU: Lesen Sie die Auswahl des Benutzers aus den neuen Radiobuttons >>
-                # scope = scope_var.get() # Beispiel: 'only_this' oder 'this_and_future'
                 scope = update_type.get()  # Get the current selected scope
                 
                 # Convert radio button values to our internal values
@@ -866,6 +879,16 @@ class WeeklyDeliveryView(WeeklyBaseView):
                         order_obj.to_date = to_date   # Might be None if not a subscription
                         order_obj.subscription_type = sub_var.get()
                         order_obj.halbe_channel = halbe_var.get()
+                        
+                        # --- Create temporary items to calculate production date ---
+                        temp_items = []
+                        for item_name, amount in order_items_data:
+                            item = self.app.items[item_name]
+                            temp_items.append(OrderItem(item=item, amount=amount))
+                        
+                        # --- Recalculate production date based on delivery date and items ---
+                        new_production_date = calculate_production_date(new_date, temp_items)
+                        order_obj.production_date = new_production_date
                         
                         # --- Update items for the current order ---
                         # (Existing logic to delete and recreate items for order_obj)
@@ -956,16 +979,63 @@ class WeeklyDeliveryView(WeeklyBaseView):
                             else:
                                 print("Skipping regeneration: Order is no longer part of a subscription.")
 
-                    else: # Creating a new order (existing logic seems okay)
-                        # ... (code to create a new order) ...
-                        # If the new order is a subscription, generate its future orders
+                    else: # Creating a new order
+                        # Get customer from combobox if this is a new order
+                        customer_name = customer_cb.get()
+                        if customer_name not in self.app.customers:
+                            messagebox.showerror("Fehler", f"Ungültiger Kunde: {customer_name}")
+                            return
+                            
+                        customer = self.app.customers[customer_name]
+                        
+                        # Create temporary items to calculate production date
+                        temp_items = []
+                        for item_name, amount in order_items_data:
+                            item = self.app.items[item_name]
+                            temp_items.append(OrderItem(item=item, amount=amount))
+                        
+                        # Calculate production date
+                        new_production_date = calculate_production_date(new_date, temp_items)
+                        
+                        # Create new order
+                        order_obj = Order.create(
+                            customer=customer,
+                            delivery_date=new_date,
+                            production_date=new_production_date,
+                            from_date=from_date,
+                            to_date=to_date,
+                            subscription_type=sub_var.get(),
+                            halbe_channel=halbe_var.get(),
+                            order_id=uuid.uuid4(),
+                            is_future=False
+                        )
+                        
+                        # Create order items
+                        for item_name, amount in order_items_data:
+                            OrderItem.create(
+                                order=order_obj,
+                                item=self.app.items[item_name],
+                                amount=amount
+                            )
+                            
+                        # If it's a subscription, generate future orders
                         if sub_var.get() > 0:
-                           # Fetch the newly created order to pass to generation function
-                           newly_created_order = Order.get_by_id(order_obj.id) # Assuming order_obj holds the new order reference
-                           if newly_created_order.subscription_type > 0 and newly_created_order.from_date and newly_created_order.to_date:
-                               future_orders = generate_subscription_orders(newly_created_order)
-                               # ... (code to create future OrderItems) ...
-
+                            future_orders = generate_subscription_orders(order_obj)
+                            print(f"Generating {len(future_orders)} future orders for new subscription.")
+                            
+                            for future_data in future_orders:
+                                future_order = Order.create(
+                                    **future_data,
+                                    order_id=uuid.uuid4()
+                                )
+                                
+                                # Copy items to future order
+                                for item_name, amount in order_items_data:
+                                    OrderItem.create(
+                                        order=future_order,
+                                        item=self.app.items[item_name],
+                                        amount=amount
+                                    )
 
                 # After successful save, notify the app for undo history if editing an existing order
                 if order and self.edit_callback:
@@ -1012,6 +1082,10 @@ class WeeklyDeliveryView(WeeklyBaseView):
                 messagebox.showinfo("Erfolg", "Bestellung erfolgreich gespeichert!")
                 edit_window.destroy()
                 self.refresh() # Refresh the current view
+                
+                # Also refresh the production and transfer views if they exist
+                if hasattr(self.app, 'refresh_tables'):
+                    self.app.refresh_tables()
 
             except Exception as e:
                 messagebox.showerror("Fehler", str(e))
@@ -1116,7 +1190,22 @@ class WeeklyDeliveryView(WeeklyBaseView):
             delete_btn.pack(side='left', padx=5)
             
 class WeeklyProductionView(WeeklyBaseView):
+    def __init__(self, parent, app=None, db=None):
+        super().__init__(parent)
+        self.app = app  # Store reference to main app
+        self.db = db    # Store reference to database
+        self.last_refresh_time = 0  # To track when we last refreshed
+        self.refresh_throttle = 1000  # minimum ms between refreshes
+        self.refresh()
+        
     def refresh(self):
+        # Add throttling to prevent excessive refreshes
+        current_time = int(time.time() * 1000)  # Current time in ms
+        if current_time - self.last_refresh_time < self.refresh_throttle:
+            # Skip this refresh if it's too soon after the last one
+            return
+            
+        self.last_refresh_time = current_time
         self.clear_day_frames()
         monday = self.get_monday_of_week()
         end_of_week = monday + timedelta(days=6)
@@ -1209,7 +1298,22 @@ class WeeklyProductionView(WeeklyBaseView):
                 diagnostic_label.pack(padx=5, pady=5, anchor='w')
                     
 class WeeklyTransferView(WeeklyBaseView):
+    def __init__(self, parent, app=None, db=None):
+        super().__init__(parent)
+        self.app = app  # Store reference to main app
+        self.db = db    # Store reference to database
+        self.last_refresh_time = 0  # To track when we last refreshed
+        self.refresh_throttle = 1000  # minimum ms between refreshes
+        self.refresh()
+        
     def refresh(self):
+        # Add throttling to prevent excessive refreshes
+        current_time = int(time.time() * 1000)  # Current time in ms
+        if current_time - self.last_refresh_time < self.refresh_throttle:
+            # Skip this refresh if it's too soon after the last one
+            return
+            
+        self.last_refresh_time = current_time
         self.clear_day_frames()
         monday = self.get_monday_of_week()
         end_of_week = monday + timedelta(days=6)

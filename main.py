@@ -17,6 +17,7 @@ import sys
 import subprocess
 import json
 import copy
+import time
 
 # Check for updates
 VERSION = "0.9"
@@ -75,6 +76,10 @@ class ProductionApp(tk.Tk):
         self.undo_pointer = -1
         self.max_undo_steps = 20  # Limit the number of undo actions
         
+        # Throttling mechanism for refreshes
+        self.last_refresh = 0
+        self.refresh_throttle = 500  # ms minimum between refreshes
+        
         style = ttk.Style()
         style.configure('Green.TFrame', background='green')
 
@@ -86,6 +91,10 @@ class ProductionApp(tk.Tk):
         self.undo_button = ttk.Button(self.toolbar, text="Rückgängig (Ctrl+Z)", command=self.undo_last_action)
         self.undo_button.pack(side='left', padx=5)
         self.undo_button.config(state='disabled')  # Initially disabled until there are actions
+        
+        # Create refresh button with improved throttled refresh
+        self.refresh_button = ttk.Button(self.toolbar, text="Alle Ansichten aktualisieren", command=self.throttled_refresh)
+        self.refresh_button.pack(side='left', padx=5)
         
         # Create undo keyboard shortcut
         self.bind('<Control-z>', lambda event: self.undo_last_action())
@@ -126,6 +135,16 @@ class ProductionApp(tk.Tk):
             self.production_view.refresh()
         if hasattr(self, 'transfer_view'):
             self.transfer_view.refresh()
+
+    def throttled_refresh(self):
+        """Refresh all views but enforce a minimum time between refreshes to prevent flickering"""
+        current_time = int(time.time() * 1000)  # Current time in ms
+        if current_time - self.last_refresh > self.refresh_throttle:
+            self.last_refresh = current_time
+            self.refresh_tables()
+            self.refresh_button.config(state='disabled')  # Temporarily disable button
+            # Re-enable button after throttle period
+            self.after(self.refresh_throttle, lambda: self.refresh_button.config(state='normal'))
 
     # Undo system methods
     def record_action(self, action_type, old_data=None, new_data=None, description=None):
@@ -809,7 +828,7 @@ class ProductionApp(tk.Tk):
     
     # Modify refresh_tables method to include items
     def refresh_tables(self):
-        """Refresh all weekly views"""
+        """Refresh all weekly views, but don't automatically schedule another refresh"""
         if hasattr(self, 'delivery_view'):
             self.delivery_view.refresh()
         if hasattr(self, 'production_view'):
@@ -817,11 +836,9 @@ class ProductionApp(tk.Tk):
         if hasattr(self, 'transfer_view'):
             self.transfer_view.refresh()
         if hasattr(self, 'customer_view'):
-            self.customer_view.load_customers()
-        if hasattr(self, 'item_view'):  # Add this block
+            self.customer_view.refresh_customer_list()
+        if hasattr(self, 'item_view'):
             self.item_view.refresh_item_list()
-        
-        self.after(5000, self.refresh_tables)
         
     def load_data(self):
         self.items = {item.name: item for item in Item.select()}
@@ -1834,7 +1851,7 @@ class ProductionApp(tk.Tk):
         ttk.Button(print_frame, text="Produktionsplan drucken",
                 command=lambda: self.print_single_schedule("production")).pack(side='right')
         
-        self.production_view = WeeklyProductionView(self.tab3)
+        self.production_view = WeeklyProductionView(self.tab3, self, self.db)
 
     def create_transfer_tab(self):
         # Create print button frame
@@ -1844,24 +1861,11 @@ class ProductionApp(tk.Tk):
         ttk.Button(print_frame, text="Transferplan drucken",
                 command=lambda: self.print_single_schedule("transfer")).pack(side='right')
         
-        self.transfer_view = WeeklyTransferView(self.tab4)
+        self.transfer_view = WeeklyTransferView(self.tab4, self, self.db)
     
     def create_customers_tab(self):
         self.customer_view = CustomerView(self.tab5, self)
     
-    def refresh_tables(self):
-        """Refresh all weekly views"""
-        if hasattr(self, 'delivery_view'):
-            self.delivery_view.refresh()
-        if hasattr(self, 'production_view'):
-            self.production_view.refresh()
-        if hasattr(self, 'transfer_view'):
-            self.transfer_view.refresh()
-        if hasattr(self, 'customer_view'):
-            self.customer_view.load_customers()
-        
-        self.after(5000, self.refresh_tables)
-
     def print_all_schedules(self):
         """Print all schedules and open the PDF"""
         try:
@@ -1912,32 +1916,37 @@ class ProductionApp(tk.Tk):
             messagebox.showwarning("Warnung", f"PDF wurde erstellt, konnte aber nicht automatisch geöffnet werden: {filepath}")
 
     def refresh_all_tables(self):
-        """Comprehensive refresh of all UI components"""
-        # Refresh schedule views
+        """Comprehensive refresh of all UI components with delays between refreshes"""
+        # Disable the refresh button temporarily
+        if hasattr(self, 'refresh_button'):
+            self.refresh_button.config(state='disabled')
+            
+        # Refresh views with small delays between each to reduce UI load
         if hasattr(self, 'delivery_view'):
             self.delivery_view.refresh()
-        if hasattr(self, 'production_view'):
-            self.production_view.refresh()
-        if hasattr(self, 'transfer_view'):
-            self.transfer_view.refresh()
             
-        # Refresh customers views
-        if hasattr(self, 'customer_view'):
-            self.customer_view.refresh_customer_list()
+        # Schedule other views to refresh with delays
+        def refresh_production():
+            if hasattr(self, 'production_view'):
+                self.production_view.refresh()
+                
+        def refresh_transfer():
+            if hasattr(self, 'transfer_view'):
+                self.transfer_view.refresh()
+                
+        def refresh_other_tabs():
+            if hasattr(self, 'customer_view'):
+                self.customer_view.refresh_customer_list()
+            if hasattr(self, 'item_view'):
+                self.item_view.refresh_item_list()
+            # Re-enable the refresh button
+            if hasattr(self, 'refresh_button'):
+                self.refresh_button.config(state='normal')
         
-        # Refresh items view
-        if hasattr(self, 'item_view'):
-            self.item_view.refresh_item_list()
-            
-        # Refresh order metrics
-        if hasattr(self, 'load_customers'):
-            self.load_customers()
-            
-        # Refresh any order list
-        if hasattr(self, 'on_customer_select'):
-            selected_customers = self.customer_tree.selection() if hasattr(self, 'customer_tree') else None
-            if selected_customers:
-                self.on_customer_select(None)
+        # Schedule refreshes with delays between each
+        self.after(100, refresh_production)
+        self.after(200, refresh_transfer)
+        self.after(300, refresh_other_tabs)
 
 if __name__ == "__main__":
     check_for_updates()

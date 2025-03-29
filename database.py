@@ -95,7 +95,7 @@ def get_production_plan(start_date=None, end_date=None):
         .switch(OrderItem)
         .join(Item)
         .where(
-            (Order.is_future == True) &
+            # Both current and future orders should be included, just filter by subscription status
             (
                 # For non-subscription orders
                 (
@@ -157,7 +157,7 @@ def get_transfer_schedule(start_date=None, end_date=None):
         .switch(OrderItem)
         .join(Item)
         .where(
-            (Order.is_future == True) &
+            # Include both current and future orders, filter by subscription status
             (
                 # Either it's a non-subscription order
                 ((Order.from_date.is_null(True)) & (Order.to_date.is_null(True))) |
