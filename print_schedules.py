@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta, date
 from fpdf import FPDF
 from models import Order, OrderItem, Item, Customer
+from database import get_delivery_schedule, get_production_plan, get_transfer_schedule
 from peewee import *
 import tkinter as tk
 from tkinter import messagebox
@@ -168,129 +169,81 @@ class SchedulePrinter:
             pdf.ln()
         pdf.ln(10)
 
-    from peewee import prefetch
-
-    def get_week_delivery_schedule(self, week_date):
-        monday = week_date - timedelta(days=week_date.weekday())
-        sunday = monday + timedelta(days=6)
-        
-        # Use prefetch to avoid duplicate orders due to the join on OrderItem and Item
-        deliveries_query = (Order
-                            .select()
-                            .where(Order.delivery_date.between(monday, sunday))
-                            .order_by(Order.delivery_date))
-        deliveries = prefetch(deliveries_query, Customer, OrderItem, Item)
-        
+    def format_delivery_data(self, deliveries):
+        """
+        Format delivery schedule data from the database.get_delivery_schedule function
+        for PDF rendering
+        """
         daily_data = {}
+        
         for delivery in deliveries:
             date_str = delivery.delivery_date.strftime("%d.%m.%Y")
             if date_str not in daily_data:
-                daily_data[date_str] = {}
+                daily_data[date_str] = []
             
-            customer_name = delivery.customer.name
-            if customer_name not in daily_data[date_str]:
-                daily_data[date_str][customer_name] = {
-                    'items': [],
-                    'halbe_channel': delivery.halbe_channel
-                }
-            
-            # Sort order items by name before adding them
+            # Sort order items by name
             sorted_items = sorted(delivery.order_items, key=lambda item: item.item.name.lower())
+            
+            # Create item text descriptions
+            item_texts = []
             for item in sorted_items:
                 # Format the amount: remove decimals if it's a whole number
                 amount_str = str(int(item.amount)) if item.amount == int(item.amount) else str(item.amount)
-                daily_data[date_str][customer_name]['items'].append(f"{item.item.name}: {amount_str}")
-        
-        # Format the data for display
-        formatted_data = {}
-        for date_str, customers in daily_data.items():
-            formatted_data[date_str] = []
+                item_texts.append(f"{item.item.name}: {amount_str}")
             
-            # Sort customers alphabetically (case-insensitive)
-            sorted_customers = sorted(customers.keys(), key=str.lower)
+            # Add formatted data
+            daily_data[date_str].append([
+                delivery.customer.name,
+                ", ".join(item_texts),
+                "Ja" if delivery.halbe_channel else "Nein"
+            ])
             
-            for customer_name in sorted_customers:
-                info = customers[customer_name]
-                half_channel_status = "Ja" if info['halbe_channel'] else "Nein"
-                formatted_items = ", ".join(info['items'])
-                
-                formatted_data[date_str].append([
-                    customer_name,
-                    formatted_items,
-                    half_channel_status
-                ])
+            # Sort customers alphabetically within each day
+            daily_data[date_str].sort(key=lambda x: x[0].lower())
         
         return {
             "headers": ["Kunde", "Items", "Halbe Channel"],
-            "daily_data": formatted_data
+            "daily_data": daily_data
         }
 
-    def get_week_production_plan(self, week_date):
-        monday = week_date - timedelta(days=week_date.weekday())
-        sunday = monday + timedelta(days=6)
-        
-        productions = (Order
-                    .select(Order, OrderItem, Item)
-                    .join(OrderItem)
-                    .join(Item)
-                    .where(Order.production_date.between(monday, sunday))
-                    .order_by(Order.production_date))
-        
+    def format_production_data(self, production_data):
+        """
+        Format production plan data from the database.get_production_plan function
+        for PDF rendering
+        """
         daily_items = {}
-        for prod in productions:
-            date_str = prod.production_date.strftime("%d.%m.%Y")
+        
+        for prod in production_data:
+            date_str = prod.order.production_date.strftime("%d.%m.%Y")
             if date_str not in daily_items:
                 daily_items[date_str] = {}
             
-            for item in prod.order_items:
-                if item.item.name not in daily_items[date_str]:
-                    # Safely get halbe_channel value (fail gracefully if customer doesn't exist)
-                    try:
-                        half_channel = "Ja" if prod.halbe_channel else "Nein"
-                    except:
-                        half_channel = "Nein"  # Default if we can't determine
-                    
-                    daily_items[date_str][item.item.name] = {
-                        'amount': 0,
-                        'half_channel': half_channel
-                    }
-                
-                daily_items[date_str][item.item.name]['amount'] += item.amount
+            if prod.item.name not in daily_items[date_str]:
+                daily_items[date_str][prod.item.name] = {
+                    'amount': 0,
+                    'half_channel': "Ja" if prod.order.halbe_channel else "Nein"
+                }
+            
+            daily_items[date_str][prod.item.name]['amount'] += prod.total_amount
         
         return daily_items
 
-    def get_week_transfer_schedule(self, week_date):
-        monday = week_date - timedelta(days=week_date.weekday())
-        sunday = monday + timedelta(days=6)
-        
-        transfers = (Order
-                    .select(Order, OrderItem, Item)
-                    .join(OrderItem)
-                    .join(Item)
-                    .order_by(Order.production_date))
-        
-        # Track items by germination date
+    def format_transfer_data(self, transfer_data):
+        """
+        Format transfer schedule data from the database.get_transfer_schedule function
+        for PDF rendering
+        """
         daily_transfers = {}
         
-        for transfer in transfers:
-            try:
-                for item in transfer.order_items:
-                    # Calculate germination (transfer) date
-                    prod_date = transfer.production_date
-                    germ_date = prod_date - timedelta(days=item.item.growth_days)
-                    
-                    if monday <= germ_date <= sunday:
-                        date_str = germ_date.strftime("%d.%m.%Y")
-                        if date_str not in daily_transfers:
-                            daily_transfers[date_str] = {}
-                        
-                        if item.item.name not in daily_transfers[date_str]:
-                            daily_transfers[date_str][item.item.name] = 0
-                        
-                        daily_transfers[date_str][item.item.name] += item.amount
-            except:
-                # Skip this transfer if we encounter errors (e.g., missing customer)
-                continue
+        for transfer in transfer_data:
+            date_str = transfer['date'].strftime("%d.%m.%Y")
+            if date_str not in daily_transfers:
+                daily_transfers[date_str] = {}
+            
+            if transfer['item'] not in daily_transfers[date_str]:
+                daily_transfers[date_str][transfer['item']] = 0
+            
+            daily_transfers[date_str][transfer['item']] += transfer['amount']
         
         return daily_transfers
 
@@ -298,12 +251,19 @@ class SchedulePrinter:
         if week_date is None:
             week_date = date.today()
 
+        # Define the date range for the week
+        monday = week_date - timedelta(days=week_date.weekday())
+        sunday = monday + timedelta(days=6)
+
         pdf = FPDF()
         pdf.add_page('L')  # Landscape orientation
 
         if schedule_type == "delivery":
             title = "Wöchentlicher Lieferplan"
-            schedule_data = self.get_week_delivery_schedule(week_date)
+            # Get delivery data using the standard database function
+            deliveries = get_delivery_schedule(monday, sunday)
+            schedule_data = self.format_delivery_data(deliveries)
+            
             self._create_header(pdf, title, week_date)
             for date_str, deliveries in schedule_data["daily_data"].items():
                 pdf.set_font('Arial', 'B', 12)
@@ -312,13 +272,19 @@ class SchedulePrinter:
 
         elif schedule_type == "production":
             title = "Wöchentlicher Produktionsplan"
-            daily_items = self.get_week_production_plan(week_date)
+            # Get production data using the standard database function
+            production_data = get_production_plan(monday, sunday)
+            daily_items = self.format_production_data(production_data)
+            
             self._create_header(pdf, title, week_date)
             self._add_weekly_plan_table(pdf, daily_items, week_date)
 
         else:  # transfer
             title = "Wöchentlicher Transferplan"
-            daily_transfers = self.get_week_transfer_schedule(week_date)
+            # Get transfer data using the standard database function
+            transfer_data = get_transfer_schedule(monday, sunday)
+            daily_transfers = self.format_transfer_data(transfer_data)
+            
             self._create_header(pdf, title, week_date)
             self._add_weekly_plan_table(pdf, daily_transfers, week_date)
 
@@ -332,12 +298,19 @@ class SchedulePrinter:
         if week_date is None:
             week_date = date.today()
 
+        # Define the date range for the week
+        monday = week_date - timedelta(days=week_date.weekday())
+        sunday = monday + timedelta(days=6)
+
         pdf = FPDF()
         
         # Delivery Schedule
         pdf.add_page('L')
         title = "Wöchentlicher Lieferplan"
-        schedule_data = self.get_week_delivery_schedule(week_date)
+        # Get delivery data using the standard database function
+        deliveries = get_delivery_schedule(monday, sunday)
+        schedule_data = self.format_delivery_data(deliveries)
+        
         self._create_header(pdf, title, week_date)
         for date_str, deliveries in schedule_data["daily_data"].items():
             pdf.set_font('Arial', 'B', 12)
@@ -347,7 +320,10 @@ class SchedulePrinter:
         # Production Plan
         pdf.add_page('L')
         title = "Wöchentlicher Produktionsplan"
-        daily_items = self.get_week_production_plan(week_date)
+        # Get production data using the standard database function
+        production_data = get_production_plan(monday, sunday)
+        daily_items = self.format_production_data(production_data)
+        
         self._create_header(pdf, title, week_date)
         for date_str, items in daily_items.items():
             pdf.set_font('Arial', 'B', 12)
@@ -370,7 +346,10 @@ class SchedulePrinter:
         # Transfer Schedule
         pdf.add_page('L')
         title = "Wöchentlicher Transferplan"
-        daily_transfers = self.get_week_transfer_schedule(week_date)
+        # Get transfer data using the standard database function
+        transfer_data = get_transfer_schedule(monday, sunday)
+        daily_transfers = self.format_transfer_data(transfer_data)
+        
         self._create_header(pdf, title, week_date)
         for date_str, transfers in daily_transfers.items():
             pdf.set_font('Arial', 'B', 12)
